@@ -1,4 +1,0 @@
-{
-  "$comment": "Every bus route in the GTFS is drawn by default, each in its GTFS colour. Comox Valley has no RapidBus, so there are no overrides (https://www.bctransit.com/comox-valley/schedules-and-maps/, checked 2026-10-28).",
-  "routes": []
-}

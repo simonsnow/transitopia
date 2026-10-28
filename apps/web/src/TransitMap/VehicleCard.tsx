@@ -4,7 +4,10 @@ import type {
   TransitSnapshot,
 } from "@transitopia/transit-map/engine.ts";
 import type { VehicleState } from "@transitopia/transit-core/schedule/engine.ts";
-import type { PlanRoute } from "@transitopia/transit-core/plan/types.ts";
+import {
+  routeName,
+  type PlanRoute,
+} from "@transitopia/transit-core/plan/types.ts";
 import { creditsFor, legendsFor } from "@transitopia/shared/datasets.ts";
 
 import { clockMinutes, timeState, toHeadsign } from "./format.ts";
@@ -53,9 +56,9 @@ export function cleanStopName(name: string | undefined): string {
 function busTitle(v: VehicleState, route: PlanRoute): string {
   const to = /\bto\s+(.+)$/i.exec(v.headsign)?.[1];
   const dest = (
-    to ?? v.headsign.replace(new RegExp(`^\\s*${route.key}\\b`), "")
+    to ?? v.headsign.replace(new RegExp(`^\\s*${routeName(route)}\\b`), "")
   ).trim();
-  return dest ? `${route.key} to ${dest}` : route.key;
+  return dest ? `${routeName(route)} to ${dest}` : routeName(route);
 }
 
 function seconds(s: number): string {

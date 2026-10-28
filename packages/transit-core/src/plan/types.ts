@@ -10,7 +10,13 @@ export type RouteKind = "skytrain" | "shape" | "bus";
 export type RouteMode = "skytrain" | "ferry" | "rail" | "bus";
 
 export interface PlanRoute {
+  /** Unique in the plan; what config, URLs and the map name it by (plan/routes.ts → `selectRoutes`). */
   key: string;
+  /**
+   * What riders call it ("1"): the key, without the agency a feed of several qualifies it with
+   * ("1@comox-valley"). Absent in plans built before it: `routeName` falls back to the key.
+   */
+  name?: string | undefined;
   label: string;
   kind: RouteKind;
   mode: RouteMode;
@@ -465,3 +471,7 @@ export function manifestRange(
     ),
   };
 }
+
+/** What riders call a route ("1"), even in a feed of several agencies (`PlanRoute.name`). */
+export const routeName = (r: Pick<PlanRoute, "key" | "name">): string =>
+  r.name ?? r.key;

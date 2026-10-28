@@ -216,6 +216,8 @@ const routeMatch = z
   .strictObject({
     route_long_name: z.string().min(1).exactOptional(),
     route_short_name: z.string().min(1).exactOptional(),
+    /** In a feed made of parts (feed.json → static.parts): the part's `agency`, with a name. */
+    agency: z.string().min(1).exactOptional(),
   })
   .refine(
     (m) => m.route_long_name !== undefined || m.route_short_name !== undefined,
@@ -447,6 +449,16 @@ const shortPattern = z.string().refine((p) => {
   }
 }, "expected a regular expression with a group");
 
+/** One of a merged feed's sources (`static.parts`). */
+const feedPart = z.strictObject({
+  /** Its agency_id in the merged feed, and what routes.json matches by (`match.agency`). */
+  agency: slug,
+  /** How riders know it ("Comox Valley"): its agency_name in the merged feed. */
+  name: z.string().min(1),
+  /** Its latest GTFS feed. */
+  url: httpsUrl,
+});
+
 const feed = z.strictObject({
   id: slug,
   /** How the site names the feed, e.g. "BC Transit (Victoria)". */
@@ -457,12 +469,34 @@ const feed = z.strictObject({
   timezone: z.string().min(1),
   /** The dataset registry id of its schedules (packages/shared/src/datasets.ts); real time is that dataset's `realtime`. */
   dataset: z.string().min(1),
-  static: z.strictObject({
-    /** The latest GTFS feed. */
-    url: httpsUrl,
-    /** A dated snapshot ({date}: YYYY-MM-DD), where the provider keeps them. */
-    historyUrl: z.string().includes("{date}").exactOptional(),
-  }),
+  static: z
+    .strictObject({
+      /** The latest GTFS feed. */
+      url: httpsUrl.exactOptional(),
+      /** A dated snapshot ({date}: YYYY-MM-DD), where the provider keeps them. */
+      historyUrl: z.string().includes("{date}").exactOptional(),
+      /**
+       * Instead of `url`: several GTFS feeds that fetch-gtfs merges into one, each its own agency
+       * (packages/data/src/gtfs-merge.ts), e.g. a provider's transit systems that meet. Where two
+       * have a row with the same key (a stop both use), the one listed first is kept.
+       */
+      parts: z
+        .array(feedPart)
+        .min(2)
+        .refine(
+          (ps) => new Set(ps.map((p) => p.agency)).size === ps.length,
+          "each part's agency is listed once",
+        )
+        .exactOptional(),
+    })
+    .refine(
+      (s) => (s.url === undefined) !== (s.parts === undefined),
+      "static needs url or parts, not both",
+    )
+    .refine(
+      (s) => s.historyUrl === undefined || s.url !== undefined,
+      "historyUrl needs url",
+    ),
   /** GTFS-realtime, polled by the server's leader only (docs/DESIGN.md#upstream-request-budget). */
   realtime: feedRealtime.exactOptional(),
   /** Its vessels' AIS positions, streamed by the server's leader (aisstream.io). */
@@ -528,6 +562,12 @@ const region = z.strictObject({
     .refine((fs) => new Set(fs).size === fs.length, "feeds are listed once"),
   /** Where the region's transit data applies. */
   bbox: bounds,
+  /**
+   * Where the site shows this region, as rectangles inside the bbox, for a region whose shape a
+   * single rectangle can't follow without covering another region's (docs/DESIGN.md#regions-and-feeds);
+   * absent, the bbox. Regions' areas don't overlap.
+   */
+  areas: z.array(bounds).min(1).exactOptional(),
   /** The first view of /transit when the URL has no map position. */
   initialBounds: bounds,
   timezoneChecks: z.array(

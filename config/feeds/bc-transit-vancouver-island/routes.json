@@ -1,0 +1,23 @@
+{
+  "$comment": "How BC Transit's routes are drawn where the GTFS alone doesn't say; every route in the feed is drawn by default, and the format is in config/feeds/translink/routes.json. Each system is an agency of its own (feed.json → static.parts), so entries match it by `agency`, and keys are qualified by it in the plan (\"95@victoria\"). No 'color': most systems give every route its own in the GTFS; the Sunshine Coast and qathet give every route 000000, which the plan treats as no colour (packages/transit-core/DESIGN.md#routes), and so does West Coast's one route, which stays black (exports of 2026-10-28). The 95 is Victoria's Blink RapidBus and the 1 the Nanaimo Rapid Line, each drawn in its own colour as BC Transit brands them (https://www.bctransit.com/victoria/, https://www.bctransit.com/nanaimo/schedules-and-maps/, checked 2026-10-28).",
+  "routes": [
+    {
+      "key": "95",
+      "label": "95 Blink RapidBus",
+      "match": {
+        "agency": "victoria",
+        "route_short_name": "95"
+      },
+      "brand": true
+    },
+    {
+      "key": "1",
+      "label": "1 Nanaimo Rapid Line",
+      "match": {
+        "agency": "nanaimo",
+        "route_short_name": "1"
+      },
+      "brand": true
+    }
+  ]
+}

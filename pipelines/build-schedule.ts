@@ -121,9 +121,10 @@ const STOP_OFFSET_WARN_M = 150;
  * place of corridor-refs.json. 18: shared stretches compare a bus exchange's bays as one place (two
  * routes into different bays of it share the stretch to it), in the frequency table. 19: routes
  * say whether they're drawn in their own colour (`brand`, in place of `category`), and carry their
- * stops and weekday speeds.
+ * stops and weekday speeds. 20: routes have a `name`, and a feed of several agencies (static.parts)
+ * qualifies their keys by agency; an agency's one colour on every route counts as none.
  */
-const PLAN_FORMAT = 19;
+const PLAN_FORMAT = 20;
 
 /** Regions showing the feed with SeaBus berths and lanes (infrastructure/seabus.json): build-schedule applies them. */
 async function ferryRegions(feed: string): Promise<string[]> {

@@ -137,8 +137,9 @@ export function lngLatBounds(
 }
 
 /**
- * The region the view shows most of (by the area of its bbox in view), or undefined if the view
- * overlaps none. Regions don't overlap (a test checks), so near one region this is that region.
+ * The region the view shows most of (by the area of its areas in view, region.json), or undefined
+ * if the view overlaps none. Regions don't overlap (a test checks), so near one region this is that
+ * region.
  */
 export function regionInView(view: {
   west: number;
@@ -148,12 +149,13 @@ export function regionInView(view: {
 }): SiteRegion | undefined {
   let best: { r: SiteRegion; area: number } | undefined;
   for (const r of REGIONS) {
-    const [w, s, e, n] = r.info.bbox;
-    const dx = Math.min(e, view.east) - Math.max(w, view.west);
-    const dy = Math.min(n, view.north) - Math.max(s, view.south);
-    if (dx <= 0 || dy <= 0) continue;
-    const area = dx * dy;
-    if (!best || area > best.area) best = { r, area };
+    let area = 0;
+    for (const [w, s, e, n] of r.info.areas ?? [r.info.bbox]) {
+      const dx = Math.min(e, view.east) - Math.max(w, view.west);
+      const dy = Math.min(n, view.north) - Math.max(s, view.south);
+      if (dx > 0 && dy > 0) area += dx * dy;
+    }
+    if (area > 0 && (!best || area > best.area)) best = { r, area };
   }
   return best?.r;
 }

@@ -1,0 +1,102 @@
+{
+  "$comment": "BC Transit's eleven transit systems on Vancouver Island, the Gulf Islands and the Sunshine Coast, one feed so the map shows them together, transfers included (docs/DESIGN.md#regions-and-feeds). Published by BC Transit through Consat (tmix.se), an operator id per system (https://www.bctransit.com/open-data/; ids checked 2026-10-28 by downloading each). Every route is drawn; overrides: routes.json. Region: vancouver-island. Terms: https://www.bctransit.com/open-data/terms-of-use/ (identify BC Transit as the source; no use of its marks).",
+  "id": "bc-transit-vancouver-island",
+  "name": "BC Transit (Vancouver Island and Sunshine Coast)",
+  "operator": "bc-transit",
+  "timezone": "America/Vancouver",
+  "dataset": "bc-transit-gtfs",
+  "static": {
+    "$comment": "Consat exports one system per request (several operatorIds return an empty feed), so fetch-gtfs merges the parts, each its own agency (packages/data/src/gtfs-merge.ts). Their ids are global: the 37 stops two systems share are the same stops (Cowichan Valley's commuter route on Victoria's Douglas St), and the services two share have identical calendars (exports of 2026-10-28); Victoria is first, so its stop names win. The merged feed covers the dates every part does (the earliest end: Nanaimo's 2026-12-19 in the exports of 2026-10-28, against Mount Waddington's 2027-12-31), where its timetable is complete. Each system is regenerated daily with a new feed_version even when its timetable is unchanged, and the export only drops past dates, so fetch-gtfs archives a version only when the merged timetable differs (config/regions/vancouver-island/README.md → Static timetable, OPEN-QUESTIONS #1). calendar_dates.txt only, shape_dist_traveled in metres.",
+    "parts": [
+      {
+        "agency": "victoria",
+        "name": "Victoria",
+        "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=48"
+      },
+      {
+        "agency": "cowichan-valley",
+        "name": "Cowichan Valley",
+        "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=10"
+      },
+      {
+        "agency": "salt-spring-island",
+        "name": "Salt Spring Island",
+        "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=39"
+      },
+      {
+        "agency": "nanaimo",
+        "name": "Nanaimo",
+        "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=41"
+      },
+      {
+        "agency": "port-alberni",
+        "name": "Port Alberni",
+        "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=11"
+      },
+      {
+        "agency": "west-coast",
+        "name": "West Coast",
+        "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=51"
+      },
+      {
+        "agency": "comox-valley",
+        "name": "Comox Valley",
+        "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=45"
+      },
+      {
+        "agency": "campbell-river",
+        "name": "Campbell River",
+        "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=12"
+      },
+      {
+        "agency": "qathet",
+        "name": "qathet",
+        "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=29"
+      },
+      {
+        "agency": "mount-waddington",
+        "name": "Mount Waddington",
+        "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=17"
+      },
+      {
+        "agency": "sunshine-coast",
+        "name": "Sunshine Coast",
+        "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=18"
+      }
+    ]
+  },
+  "realtime": {
+    "$comment": "No API key and no stated request limit. One request covers every system: the endpoints take several operatorIds (vehicles of 10, 39 and 48 together were the sum of each alone, 2026-10-28). Victoria alone had 185 buses reporting, every one on a trip, fixes p50 ~8 s old when fetched (2026-10-14).",
+    "urls": {
+      "positions": "https://bct.tmix.se/gtfs-realtime/vehicleupdates.pb?operatorIds=48,10,39,41,11,51,45,12,29,17,18",
+      "tripUpdates": "https://bct.tmix.se/gtfs-realtime/tripupdates.pb?operatorIds=48,10,39,41,11,51,45,12,29,17,18",
+      "alerts": "https://bct.tmix.se/gtfs-realtime/alerts.pb?operatorIds=48,10,39,41,11,51,45,12,29,17,18"
+    },
+    "$poll": "Guess, to be polite to a provider that states no limit: positions every 30 s while buses run (05:00-24:00), every 60 s overnight; trip updates (~0.3-1 MB each for every system) every 2 minutes, 5 overnight; alerts every 5 minutes, 15 overnight. About 3,460 requests a day for all eleven systems; dailyCap is a safety net. OPEN-QUESTIONS #2.",
+    "poll": {
+      "dailyCap": 4000,
+      "weekday": [
+        { "from": "00:00", "positionsS": 60, "tripUpdatesS": 300, "alertsS": 900 },
+        { "from": "05:00", "positionsS": 30, "tripUpdatesS": 120, "alertsS": 300 }
+      ],
+      "weekend": [
+        { "from": "00:00", "positionsS": 60, "tripUpdatesS": 300, "alertsS": 900 },
+        { "from": "05:00", "positionsS": 30, "tripUpdatesS": 120, "alertsS": 300 }
+      ]
+    },
+    "$staleGraceS": "Clients fall back to schedule estimates once live data is this much older than the positions poll interval (guess, OPEN-QUESTIONS #2).",
+    "staleGraceS": 60,
+    "$coverageSlackS": "Recorder coverage breaks when snapshots are further apart than the positions poll interval plus this (guess, OPEN-QUESTIONS #2).",
+    "coverageSlackS": 30,
+    "$interpolateSlackS": "Interpolate between two fixes at most the positions poll interval plus this apart (guess, OPEN-QUESTIONS #2).",
+    "interpolateSlackS": 90,
+    "$extrapolateSlackS": "Predict a bus forward for at most the positions poll interval plus this (fixes are fresher than TransLink's: p50 ~8 s, max ~60 s old when fetched in Victoria; guess, OPEN-QUESTIONS #2).",
+    "extrapolateSlackS": 45
+  },
+  "display": {
+    "$tripId": "Trip ids are three internal ids, <journey>:<variant>:<block> (e.g. 11898518:14545024:14591755); the journey alone is unique on any date (Victoria's feed of 2026-10-14: a journey appears in at most two trips, never running the same day). Trip ids are unique across the systems (exports of 2026-10-28).",
+    "tripId": "^([^:]+):",
+    "$feedVersion": "Versions look like \"202610140/20261013 21:00:00/20261014 04:00:00\": the export date and a sequence number, then the export window. The merged feed has its newest part's.",
+    "feedVersion": "^([^/ ]+)"
+  }
+}

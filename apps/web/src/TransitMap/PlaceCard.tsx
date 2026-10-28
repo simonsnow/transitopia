@@ -8,7 +8,10 @@ import type {
   TransitSnapshot,
 } from "@transitopia/transit-map/engine.ts";
 import type { Place } from "@transitopia/transit-map/url.ts";
-import type { PlanRoute } from "@transitopia/transit-core/plan/types.ts";
+import {
+  routeName,
+  type PlanRoute,
+} from "@transitopia/transit-core/plan/types.ts";
 import { bayLabel } from "@transitopia/transit-core/plan/exchanges.ts";
 import { creditsFor, legendsFor } from "@transitopia/shared/datasets.ts";
 
@@ -255,7 +258,7 @@ const SharedRow: React.FC<{
 const byRouteNumber = (a: PlanRoute, b: PlanRoute) =>
   Number(a.mode === "bus") - Number(b.mode === "bus")
   || (a.mode === "bus" ?
-    a.key.localeCompare(b.key, undefined, { numeric: true })
+    routeName(a).localeCompare(routeName(b), undefined, { numeric: true })
   : 0);
 
 const groupKey = (g: PlaceGroup) => `${g.route.key}|${g.headsign}`;
@@ -569,7 +572,7 @@ const PlaceCardBody: React.FC<{
         : { tone: "estimated", text: "Times estimated from the schedule" }
       }
       chips={place.routes.toSorted(byRouteNumber).map((r) => ({
-        label: isBus(r) ? r.key : r.label,
+        label: isBus(r) ? routeName(r) : r.label,
         color: colors(r),
         onSelect: go({ kind: "route", id: r.key }),
         action: `View route: ${r.label}`,

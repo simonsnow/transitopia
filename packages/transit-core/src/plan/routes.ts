@@ -3,11 +3,17 @@
 // (matched by name, never route_id) and excluding others.
 
 import type { Config, RouteConfig, RouteMatch } from "../config.ts";
-import type { PlanRoute, RouteKind, RouteMode } from "./types.ts";
+import {
+  routeName,
+  type PlanRoute,
+  type RouteKind,
+  type RouteMode,
+} from "./types.ts";
 
 /** The routes.txt fields this reads. */
 export interface GtfsRouteRow {
   route_id?: string | undefined;
+  agency_id?: string | undefined;
   route_short_name?: string | undefined;
   route_long_name?: string | undefined;
   route_type?: string | undefined;
@@ -72,8 +78,9 @@ export function defaultLabel(row: GtfsRouteRow, key: string): string {
 export function matches(row: GtfsRouteRow, m: RouteMatch): boolean {
   return Object.entries(m).every(
     ([field, value]) =>
-      (row[field as keyof GtfsRouteRow] ?? "").trim().toLowerCase()
-      === value.toLowerCase(),
+      (field === "agency" ? row.agency_id : row[field as keyof GtfsRouteRow])
+        ?.trim()
+        .toLowerCase() === value.toLowerCase(),
   );
 }
 
@@ -102,6 +109,10 @@ export interface RouteSelection {
  * The plan's routes from a feed's routes.txt and its routes.json. Sorted by group (rail and
  * ferries, buses in their own colour, other buses), then as listed in routes.json, then by key, numbers in order. Throws when an
  * entry matches more than one route, or two routes would share a key.
+ *
+ * In a feed of several agencies (a feed made of parts, feed.json → static.parts), each system has
+ * its own route 1: keys are qualified by the agency ("1@comox-valley"), and `name` is what riders
+ * see ("1").
  */
 export function selectRoutes(
   rows: readonly GtfsRouteRow[],
@@ -111,6 +122,18 @@ export function selectRoutes(
   const routes: PlanRoute[] = [];
   const skipped: RouteSelection["skipped"] = [];
   const used = new Set<RouteConfig>();
+  const agencies = new Set(rows.map((r) => r.agency_id ?? ""));
+  // An agency giving all its routes one colour has none of its own: it's a placeholder (BC
+  // Transit's Sunshine Coast and qathet give every route 000000).
+  const colorsOf = new Map<string, string[]>();
+  for (const r of rows) {
+    const a = r.agency_id ?? "";
+    colorsOf.set(a, [...(colorsOf.get(a) ?? []), r.route_color ?? ""]);
+  }
+  const placeholder = (row: GtfsRouteRow) => {
+    const cs = colorsOf.get(row.agency_id ?? "")!;
+    return cs.length > 1 && new Set(cs).size === 1;
+  };
   for (const row of rows) {
     if (cfg.exclude?.some((x) => matches(row, x.match))) {
       skipped.push({ row, reason: "excluded in routes.json" });
@@ -130,14 +153,15 @@ export function selectRoutes(
       });
       continue;
     }
-    const key = over?.key ?? defaultKey(row);
-    if (!key) {
+    const name = over?.key ?? defaultKey(row);
+    if (!name) {
       skipped.push({
         row,
         reason: "no name to key it by: add it to routes.json",
       });
       continue;
     }
+    const key = agencies.size > 1 ? `${name}@${row.agency_id ?? ""}` : name;
     if (routes.some((r) => r.key === key))
       throw new Error(
         `Two routes have the key ${key} (GTFS route ${row.route_id}): give one a key in routes.json`,
@@ -145,24 +169,28 @@ export function selectRoutes(
     const mode = over?.mode ?? model!.mode;
     routes.push({
       key,
-      label: over?.label ?? defaultLabel(row, key),
+      name,
+      label: over?.label ?? defaultLabel(row, name),
       kind: over?.kind ?? model!.kind,
       mode,
       brand: over?.brand ?? mode !== "bus",
-      color: over?.color ?? hexColor(row.route_color, NO_COLOR),
+      color:
+        over?.color
+        ?? (placeholder(row) ? NO_COLOR : hexColor(row.route_color, NO_COLOR)),
       textColor: hexColor(row.route_text_color, "#ffffff"),
       gtfsRouteId: row.route_id!,
       ...(dataset ? { dataset } : {}),
     });
   }
-  const listed = (k: string) => {
-    const i = cfg.routes.findIndex((c) => c.key === k);
+  const listed = (r: PlanRoute) => {
+    const i = cfg.routes.findIndex((c) => c.key === routeName(r));
     return i < 0 ? Infinity : i;
   };
   routes.sort(
     (a, b) =>
       groupOf(a) - groupOf(b)
-      || listed(a.key) - listed(b.key)
+      || listed(a) - listed(b)
+      || byNumber.compare(routeName(a), routeName(b))
       || byNumber.compare(a.key, b.key),
   );
   return {

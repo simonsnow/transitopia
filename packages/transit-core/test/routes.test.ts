@@ -118,6 +118,61 @@ describe("selectRoutes", () => {
       ),
     ).toThrow(/Two routes have the key 5/);
   });
+
+  it("qualifies keys by agency in a feed of several, matching overrides by agency", () => {
+    const rows = [
+      { ...row("1-VIC", "1", "Richardson"), agency_id: "victoria" },
+      { ...row("95-VIC", "95", "Blink"), agency_id: "victoria" },
+      { ...row("1-NAN", "1", "Rapid Line"), agency_id: "nanaimo" },
+    ];
+    const { routes } = selectRoutes(
+      rows,
+      cfg({
+        routes: [
+          {
+            key: "1",
+            label: "1 Nanaimo Rapid Line",
+            match: { agency: "nanaimo", route_short_name: "1" },
+            brand: true,
+          },
+        ],
+      }),
+      undefined,
+    );
+    expect(routes.map((r) => [r.key, r.name, r.label, r.brand])).toEqual([
+      ["1@nanaimo", "1", "1 Nanaimo Rapid Line", true],
+      ["1@victoria", "1", "1 Richardson", false],
+      ["95@victoria", "95", "95 Blink", false],
+    ]);
+  });
+
+  it("treats one colour on every route of an agency as none", () => {
+    const { routes } = selectRoutes(
+      [
+        { ...row("1-SC", "1", "Gibsons", "3", "000000"), agency_id: "sc" },
+        { ...row("2-SC", "2", "Sechelt", "3", "000000"), agency_id: "sc" },
+        { ...row("1-CR", "1", "Willow Point", "3", "004B8D"), agency_id: "cr" },
+        { ...row("15-CR", "15", "Quinsam", "3", "000000"), agency_id: "cr" },
+      ],
+      cfg({ routes: [] }),
+      undefined,
+    );
+    expect(Object.fromEntries(routes.map((r) => [r.key, r.color]))).toEqual({
+      "1@sc": "#666666",
+      "2@sc": "#666666",
+      "1@cr": "#004b8d",
+      "15@cr": "#000000",
+    });
+  });
+
+  it("keeps plain keys in a feed of one agency", () => {
+    const { routes } = selectRoutes(
+      [{ ...row("a", "5", "Robson"), agency_id: "x" }],
+      cfg({ routes: [] }),
+      undefined,
+    );
+    expect(routes.map((r) => [r.key, r.name])).toEqual([["5", "5"]]);
+  });
 });
 
 describe("defaults", () => {

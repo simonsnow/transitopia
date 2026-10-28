@@ -1,7 +1,9 @@
 // Download the roads a feed's buses can use from OpenStreetMap via Overpass, for matching bus shapes
 // to streets in build-schedule (packages/transit-core/DESIGN.md#bus-corridors): every public road
 // class, busways, service roads open to buses, and service roads near bus stops (exchange loops are
-// often plain service roads). The area is the bbox of the regions showing the feed. Saved with a date
+// often plain service roads). The area is the bbox of the regions showing the feed and of the feed's
+// own stops (newest archived GTFS), so routes that run past a region's edge (regions don't overlap,
+// docs/DESIGN.md#regions-and-feeds) are still matched to streets. Saved with a date
 // so builds are reproducible: var/raw/osm-roads/<feed>/YYYY-MM-DD.json (and latest.json).
 //
 //   tsx pipelines/fetch-osm-roads.ts [--feed <id>]   (default: every feed)
@@ -21,6 +23,8 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { archivedFeeds } from "@transitopia/data/gtfs-day.ts";
+import { readCsv } from "@transitopia/data/gtfs-zip.ts";
 import {
   feedPaths,
   log,
@@ -54,6 +58,35 @@ const ROAD_CLASSES = [
 const KEEP_DATED = 3;
 /** Service roads this close to a bus stop are included (m): exchange loops and bays. */
 const SERVICE_NEAR_STOP_M = 150;
+/** Margin around the feed's stops (degrees, about 1 km), for shapes that run a little past them. */
+const STOPS_MARGIN_DEG = 0.01;
+
+type Bbox = [number, number, number, number];
+
+/** The bbox of the feed's stops in its newest archived GTFS, with a margin; undefined without one. */
+async function stopsBbox(feed: string): Promise<Bbox | undefined> {
+  const [newest] = await archivedFeeds(feed);
+  if (!newest) return undefined;
+  let box: Bbox | undefined;
+  for await (const row of readCsv(newest.path, "stops.txt")) {
+    const lat = Number(row.stop_lat);
+    const lon = Number(row.stop_lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || (!lat && !lon))
+      continue;
+    box =
+      box ?
+        [
+          Math.min(box[0], lon),
+          Math.min(box[1], lat),
+          Math.max(box[2], lon),
+          Math.max(box[3], lat),
+        ]
+      : [lon, lat, lon, lat];
+  }
+  if (!box) return undefined;
+  const m = STOPS_MARGIN_DEG;
+  return [box[0] - m, box[1] - m, box[2] + m, box[3] + m];
+}
 
 function query(bbox: string): string {
   return `[out:json][timeout:600];
@@ -70,7 +103,7 @@ node(w.ways);
 out skel qt;`;
 }
 
-async function fetchFeed(feed: string, bbox: [number, number, number, number]) {
+async function fetchFeed(feed: string, bbox: Bbox) {
   const [west, south, east, north] = bbox;
   const q = query([south, west, north, east].join(","));
   const dir = feedPaths(feed).roads;
@@ -138,11 +171,13 @@ for (const feed of await readFeeds()) {
   }
   const shown = regions.filter((r) => r.feeds.includes(feed.id));
   if (!shown.length) continue;
-  const bbox: [number, number, number, number] = [
-    Math.min(...shown.map((r) => r.bbox[0])),
-    Math.min(...shown.map((r) => r.bbox[1])),
-    Math.max(...shown.map((r) => r.bbox[2])),
-    Math.max(...shown.map((r) => r.bbox[3])),
+  const stops = await stopsBbox(feed.id);
+  const boxes = [...shown.map((r) => r.bbox), ...(stops ? [stops] : [])];
+  const bbox: Bbox = [
+    Math.min(...boxes.map((b) => b[0])),
+    Math.min(...boxes.map((b) => b[1])),
+    Math.max(...boxes.map((b) => b[2])),
+    Math.max(...boxes.map((b) => b[3])),
   ];
   await fetchFeed(feed.id, bbox);
 }

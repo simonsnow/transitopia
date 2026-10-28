@@ -237,16 +237,26 @@ describe("regions and feeds", () => {
   });
 
   it("regions don't overlap", () => {
+    const areas = (r: (typeof regions)[number]) =>
+      r.region.areas ?? [r.region.bbox];
     for (const a of regions)
       for (const b of regions) {
         if (a.id >= b.id) continue;
-        const [aw, as, ae, an] = a.region.bbox;
-        const [bw, bs, be, bn] = b.region.bbox;
-        expect(
-          aw < be && bw < ae && as < bn && bs < an,
-          `${a.id} and ${b.id}`,
-        ).toBe(false);
+        for (const [aw, as, ae, an] of areas(a))
+          for (const [bw, bs, be, bn] of areas(b))
+            expect(
+              aw < be && bw < ae && as < bn && bs < an,
+              `${a.id} and ${b.id}`,
+            ).toBe(false);
       }
+  });
+
+  it("regions' areas are inside their bbox", () => {
+    for (const { id, region } of regions) {
+      const [w, s, e, n] = region.bbox;
+      for (const [aw, as, ae, an] of region.areas ?? [])
+        expect(aw >= w && as >= s && ae <= e && an <= n, id).toBe(true);
+    }
   });
 
   it("fills in a key, and refuses URLs that don't agree with apiKey", () => {

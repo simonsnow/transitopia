@@ -1,5 +1,6 @@
 // Download each feed's latest GTFS static zip (config/feeds/<feed>/feed.json → static.url), or a dated
-// snapshot where the provider keeps them, and archive it by feed_version under
+// snapshot where the provider keeps them, or each of its parts' (static.parts), merged into one
+// (packages/data/src/gtfs-merge.ts); and archive it by feed_version under
 // var/raw/gtfs/<feed>/<version dir>/google_transit.zip. Idempotent: an already-archived version is
 // left alone, and so is a download with the same timetable as the newest archived version's: the
 // same files, or the same minus the dates that have passed (BC Transit re-exports every day, under
@@ -17,6 +18,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { readCsvAll, zipSignature } from "@transitopia/data/gtfs-zip.ts";
+import { mergeGtfs } from "@transitopia/data/gtfs-merge.ts";
 import { archivedFeeds, type FeedZip } from "@transitopia/data/gtfs-day.ts";
 import {
   rolloffDifference,
@@ -41,6 +43,19 @@ export interface FetchedFeed {
   isNew: boolean;
 }
 
+async function download(feed: string, url: string, dest: string) {
+  log(`${feed}: downloading ${url}`);
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Transitopia (+https://www.transitopia.org)" },
+  });
+  if (!res.ok || !res.body)
+    throw new Error(`${feed}: GTFS download failed: HTTP ${res.status}`);
+  await pipeline(
+    Readable.fromWeb(res.body as WebReadableStream),
+    createWriteStream(dest),
+  );
+}
+
 export async function fetchGtfs(
   feed: FeedInfo,
   url = feed.static.url,
@@ -48,18 +63,28 @@ export async function fetchGtfs(
   const raw = feedPaths(feed.id).raw;
   await mkdir(raw, { recursive: true });
   const tmp = join(raw, `download-${process.pid}.zip`);
-  log(`${feed.id}: downloading ${url}`);
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Transitopia (+https://www.transitopia.org)" },
-  });
-  if (!res.ok || !res.body)
-    throw new Error(`${feed.id}: GTFS download failed: HTTP ${res.status}`);
-  await pipeline(
-    Readable.fromWeb(res.body as WebReadableStream),
-    createWriteStream(tmp),
-  );
+  const partFiles: string[] = [];
 
   try {
+    if (url) await download(feed.id, url, tmp);
+    else {
+      // Every part, or none: a merged feed missing a part would drop its system's service.
+      const parts = feed.static.parts ?? [];
+      for (const p of parts) {
+        const path = join(raw, `download-${process.pid}-${p.agency}.zip`);
+        partFiles.push(path);
+        await download(`${feed.id} (${p.agency})`, p.url, path);
+      }
+      await mergeGtfs(
+        parts.map((p, i) => ({
+          agency: p.agency,
+          name: p.name,
+          path: partFiles[i]!,
+        })),
+        tmp,
+      );
+    }
+
     const [info] = await readCsvAll(tmp, "feed_info.txt");
     if (!info?.feed_version || !info.feed_start_date || !info.feed_end_date)
       throw new Error(
@@ -104,6 +129,7 @@ export async function fetchGtfs(
     return { ...found, path: dest, isNew: true };
   } finally {
     await rm(tmp, { force: true });
+    for (const f of partFiles) await rm(f, { force: true });
   }
 }
 
