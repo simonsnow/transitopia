@@ -1,0 +1,41 @@
+{
+  "$comment": "BC Transit's Nanaimo Regional Transit System, published through Consat (tmix.se) as operator 41. Mobility Database links its schedule (mdb-2473), alerts (mdb-2474), trip updates (mdb-2475), and vehicle positions (mdb-2476): https://mobilitydatabase.org/feeds/gtfs_rt/mdb-2476 (checked 2026-10-28). Every route is drawn; overrides: routes.json. Region: nanaimo. Terms: https://www.bctransit.com/open-data/terms-of-use/.",
+  "id": "bc-transit-nanaimo",
+  "name": "BC Transit (Nanaimo)",
+  "operator": "bc-transit",
+  "timezone": "America/Vancouver",
+  "dataset": "bc-transit-gtfs",
+  "static": {
+    "$comment": "The 2026-10-28 export has a daily feed_version, calendar_dates.txt only, and shape_dist_traveled in metres, like BC Transit's Victoria and Kelowna feeds. fetch-gtfs archives a new version only when the timetable differs from the newest archived one. How often it changes is open (config/regions/nanaimo/OPEN-QUESTIONS.md #1).",
+    "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=41"
+  },
+  "realtime": {
+    "$comment": "The positions, trip updates, and alerts endpoints returned protobuf on 2026-10-28. No API key or stated request limit. Polling and age thresholds are assumptions shared with the other BC Transit feeds (config/regions/nanaimo/OPEN-QUESTIONS.md #2).",
+    "urls": {
+      "positions": "https://bct.tmix.se/gtfs-realtime/vehicleupdates.pb?operatorIds=41",
+      "tripUpdates": "https://bct.tmix.se/gtfs-realtime/tripupdates.pb?operatorIds=41",
+      "alerts": "https://bct.tmix.se/gtfs-realtime/alerts.pb?operatorIds=41"
+    },
+    "poll": {
+      "dailyCap": 4000,
+      "weekday": [
+        { "from": "00:00", "positionsS": 60, "tripUpdatesS": 300, "alertsS": 900 },
+        { "from": "05:00", "positionsS": 30, "tripUpdatesS": 120, "alertsS": 300 }
+      ],
+      "weekend": [
+        { "from": "00:00", "positionsS": 60, "tripUpdatesS": 300, "alertsS": 900 },
+        { "from": "05:00", "positionsS": 30, "tripUpdatesS": 120, "alertsS": 300 }
+      ]
+    },
+    "staleGraceS": 60,
+    "coverageSlackS": 30,
+    "interpolateSlackS": 90,
+    "extrapolateSlackS": 45
+  },
+  "display": {
+    "$tripId": "The Consat trip id begins with the journey id, as in BC Transit's other feeds. Confirm against Nanaimo recordings (config/regions/nanaimo/OPEN-QUESTIONS.md #3).",
+    "tripId": "^([^:]+):",
+    "$feedVersion": "The 2026-10-28 feed version begins with an export date and sequence number, before slash-separated export times.",
+    "feedVersion": "^([^/ ]+)"
+  }
+}

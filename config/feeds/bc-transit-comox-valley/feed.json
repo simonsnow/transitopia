@@ -1,0 +1,41 @@
+{
+  "$comment": "BC Transit's Comox Valley Transit System (Courtenay, Comox, Cumberland), published through Consat (tmix.se) as operator 45. Mobility Database lists its trip updates at https://mobilitydatabase.org/feeds/gtfs_rt/mdb-2526; the schedule, positions, and alerts endpoints with operatorIds=45 returned Comox Valley data on 2026-10-28. Every route is drawn; overrides: routes.json. Region: comox-valley. Terms: https://www.bctransit.com/open-data/terms-of-use/.",
+  "id": "bc-transit-comox-valley",
+  "name": "BC Transit (Comox Valley)",
+  "operator": "bc-transit",
+  "timezone": "America/Vancouver",
+  "dataset": "bc-transit-gtfs",
+  "static": {
+    "$comment": "The 2026-10-28 export has a daily feed_version, calendar_dates.txt only, and shape_dist_traveled in metres, like BC Transit's other feeds. fetch-gtfs archives a new version only when the timetable differs from the newest archived one. How often it changes is open (config/regions/comox-valley/OPEN-QUESTIONS.md #1).",
+    "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=45"
+  },
+  "realtime": {
+    "$comment": "The positions, trip updates, and alerts endpoints returned protobuf on 2026-10-28. No API key or stated request limit. Polling and age thresholds are assumptions shared with the other BC Transit feeds (config/regions/comox-valley/OPEN-QUESTIONS.md #2).",
+    "urls": {
+      "positions": "https://bct.tmix.se/gtfs-realtime/vehicleupdates.pb?operatorIds=45",
+      "tripUpdates": "https://bct.tmix.se/gtfs-realtime/tripupdates.pb?operatorIds=45",
+      "alerts": "https://bct.tmix.se/gtfs-realtime/alerts.pb?operatorIds=45"
+    },
+    "poll": {
+      "dailyCap": 4000,
+      "weekday": [
+        { "from": "00:00", "positionsS": 60, "tripUpdatesS": 300, "alertsS": 900 },
+        { "from": "05:00", "positionsS": 30, "tripUpdatesS": 120, "alertsS": 300 }
+      ],
+      "weekend": [
+        { "from": "00:00", "positionsS": 60, "tripUpdatesS": 300, "alertsS": 900 },
+        { "from": "05:00", "positionsS": 30, "tripUpdatesS": 120, "alertsS": 300 }
+      ]
+    },
+    "staleGraceS": 60,
+    "coverageSlackS": 30,
+    "interpolateSlackS": 90,
+    "extrapolateSlackS": 45
+  },
+  "display": {
+    "$tripId": "The Consat trip id begins with the journey id, as in BC Transit's other feeds. Confirm against Comox Valley recordings (config/regions/comox-valley/OPEN-QUESTIONS.md #3).",
+    "tripId": "^([^:]+):",
+    "$feedVersion": "The 2026-10-28 feed version begins with an export date and sequence number, before slash-separated export times.",
+    "feedVersion": "^([^/ ]+)"
+  }
+}
