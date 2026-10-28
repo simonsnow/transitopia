@@ -249,8 +249,10 @@ const routes = z.strictObject({
   routes: z
     .array(route)
     .refine(
-      (rs) => new Set(rs.map((r) => r.key)).size === rs.length,
-      "route keys must be unique",
+      (rs) =>
+        new Set(rs.map((r) => `${r.key}@${r.match.agency ?? ""}`)).size
+        === rs.length,
+      "route keys must be unique (per agency, where entries match one)",
     ),
   /** Routes in the feed the plan leaves out: not drawn, not on cards, not tracked. */
   exclude: z.array(z.strictObject({ match: routeMatch })).exactOptional(),

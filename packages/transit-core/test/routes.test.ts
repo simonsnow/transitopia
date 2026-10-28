@@ -165,6 +165,17 @@ describe("selectRoutes", () => {
     });
   });
 
+  it("allows one key per agency in routes.json", () => {
+    const entry = (agency?: string) => ({
+      key: "1",
+      match: { route_short_name: "1", ...(agency ? { agency } : {}) },
+    });
+    expect(() =>
+      cfg({ routes: [entry("nanaimo"), entry("west-coast")] }),
+    ).not.toThrow();
+    expect(() => cfg({ routes: [entry(), entry()] })).toThrow(/unique/);
+  });
+
   it("keeps plain keys in a feed of one agency", () => {
     const { routes } = selectRoutes(
       [{ ...row("a", "5", "Robson"), agency_id: "x" }],
