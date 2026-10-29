@@ -10,6 +10,8 @@ export type DatasetId =
   | "translink-gtfs-rt"
   | "bc-transit-gtfs"
   | "bc-transit-gtfs-rt"
+  | "bc-ferries-gtfs"
+  | "bc-inland-ferries"
   | "aisstream";
 
 export interface Dataset {
@@ -96,6 +98,21 @@ export const DATASETS: Record<DatasetId, Dataset> = {
     credit: "Real-time: BC Transit",
     url: "https://www.bctransit.com/open-data/",
     license: BC_TRANSIT_TERMS,
+  },
+  "bc-ferries-gtfs": {
+    id: "bc-ferries-gtfs",
+    credit: "Schedules: BC Ferries",
+    // Unofficial use: BC Ferries' marks aren't used, and no endorsement implied (DATA-LICENSES.md).
+    legend:
+      "Ferry schedules from BC Ferries' published GTFS. Transitopia is not affiliated with or endorsed by BC Ferries.",
+    url: "https://www.bcferries.com/",
+  },
+  "bc-inland-ferries": {
+    id: "bc-inland-ferries",
+    credit: "Schedules: BC Inland Ferries",
+    legend:
+      "Inland ferry schedules transcribed by Transitopia from the Government of British Columbia's published timetables.",
+    url: "https://www2.gov.bc.ca/gov/content/transportation/passenger-travel/water-travel/inland-ferries",
   },
   aisstream: {
     id: "aisstream",

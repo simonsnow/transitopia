@@ -1,0 +1,19 @@
+{
+  "$comment": "BC Ferries: the operator of the bc-ferries feed (config/feeds/bc-ferries/). Its vessels are far bigger and faster than SeaBus, which the ferry defaults are for (config/defaults/kinematics.json). These are the minor routes' vessels; routes.json gives the major routes' bigger ones.",
+  "id": "bc-ferries",
+  "name": "BC Ferries",
+  "kinematics": {
+    "modes": {
+      "ferry": {
+        "$maxSpeed": "km/h. Island and Salish class vessels, the minor routes', service speeds about 14-15 knots (BC Ferries fleet pages, https://www.bcferries.com/on-the-ferry/our-fleet, checked 2026-10-28; guess within that).",
+        "maxSpeed": 28,
+        "$length": "m. Island class 81 m, Salish class 107 m: a middle value (guess). Drawn to scale, so the length shows at station zoom.",
+        "length": 90,
+        "width": 20,
+        "$accel": "m/s². Ships take a few minutes to reach speed (guess).",
+        "accel": 0.05,
+        "decel": 0.05
+      }
+    }
+  }
+}

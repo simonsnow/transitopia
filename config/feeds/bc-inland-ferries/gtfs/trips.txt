@@ -1,0 +1,25 @@
+route_id,service_id,trip_id,trip_headsign,direction_id,shape_id
+kootenay-lake,winter-2026,kl-balfour-0630,Kootenay Bay,0,kootenay-lake-east
+kootenay-lake,winter-2026,kl-balfour-0810,Kootenay Bay,0,kootenay-lake-east
+kootenay-lake,winter-2026,kl-balfour-0950,Kootenay Bay,0,kootenay-lake-east
+kootenay-lake,winter-2026,kl-balfour-1130,Kootenay Bay,0,kootenay-lake-east
+kootenay-lake,winter-2026,kl-balfour-1310,Kootenay Bay,0,kootenay-lake-east
+kootenay-lake,winter-2026,kl-balfour-1450,Kootenay Bay,0,kootenay-lake-east
+kootenay-lake,winter-2026,kl-balfour-1630,Kootenay Bay,0,kootenay-lake-east
+kootenay-lake,winter-2026,kl-balfour-1810,Kootenay Bay,0,kootenay-lake-east
+kootenay-lake,winter-2026,kl-balfour-1950,Kootenay Bay,0,kootenay-lake-east
+kootenay-lake,winter-2026,kl-balfour-2140,Kootenay Bay,0,kootenay-lake-east
+kootenay-lake,winter-2026,kl-kootenay-bay-0710,Balfour,1,kootenay-lake-west
+kootenay-lake,winter-2026,kl-kootenay-bay-0900,Balfour,1,kootenay-lake-west
+kootenay-lake,winter-2026,kl-kootenay-bay-1040,Balfour,1,kootenay-lake-west
+kootenay-lake,winter-2026,kl-kootenay-bay-1220,Balfour,1,kootenay-lake-west
+kootenay-lake,winter-2026,kl-kootenay-bay-1400,Balfour,1,kootenay-lake-west
+kootenay-lake,winter-2026,kl-kootenay-bay-1540,Balfour,1,kootenay-lake-west
+kootenay-lake,winter-2026,kl-kootenay-bay-1720,Balfour,1,kootenay-lake-west
+kootenay-lake,winter-2026,kl-kootenay-bay-1900,Balfour,1,kootenay-lake-west
+kootenay-lake,winter-2026,kl-kootenay-bay-2040,Balfour,1,kootenay-lake-west
+kootenay-lake,winter-2026,kl-kootenay-bay-2220,Balfour,1,kootenay-lake-west
+harrop,on-demand-2026,harrop-ab,Highway 3A,0,harrop-ab
+harrop,on-demand-2026,harrop-ba,Harrop,1,harrop-ba
+glade,on-demand-2026,glade-ab,Glade,0,glade-ab
+glade,on-demand-2026,glade-ba,Highway 3A,1,glade-ba

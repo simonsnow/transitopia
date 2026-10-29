@@ -61,11 +61,8 @@ export interface SiteRegion {
   config: RegionConfig;
 }
 
-function siteRegion(info: RegionInfo): SiteRegion {
-  // The engine draws one feed per region for now (RegionConfig.feed).
-  if (info.feeds.length !== 1)
-    throw new Error(`Region ${info.id}: the site shows exactly one feed`);
-  const feedId = info.feeds[0]!;
+/** A feed, its operator, and its vehicles' settings resolved from the defaults, operator and feed. */
+function feedConfig(feedId: string) {
   const feed = parseFeed(file(feedFiles, "feeds", feedId, "feed"));
   const routes = parseConfig(
     "routes",
@@ -74,18 +71,37 @@ function siteRegion(info: RegionInfo): SiteRegion {
   const op = parseOperator(
     file(operatorFiles, "operators", feed.operator, "operator"),
   );
+  return {
+    feed,
+    op,
+    kinematics: resolveKinematics(
+      defaultsFile("kinematics"),
+      op,
+      feed,
+      routes.routes,
+    ),
+  };
+}
+
+function siteRegion(info: RegionInfo): SiteRegion {
+  // The first feed is the region's primary; the others are overlays (docs/DESIGN.md#overlay-feeds).
+  const [primary, ...others] = info.feeds;
+  const { feed, op, kinematics } = feedConfig(primary!);
   const rt = file(regionSettings, "regions", info.id, "rt");
   const operations = file(regionSettings, "regions", info.id, "operations");
   return {
     info,
     config: {
       feed,
-      kinematics: resolveKinematics(
-        defaultsFile("kinematics"),
-        op,
-        feed,
-        routes.routes,
-      ),
+      kinematics,
+      ...(others.length ?
+        {
+          overlays: others.map((id) => {
+            const o = feedConfig(id);
+            return { feed: o.feed, kinematics: o.kinematics };
+          }),
+        }
+      : {}),
       rt: resolveRt(
         defaultsFile("rt"),
         op,

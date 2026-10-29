@@ -142,7 +142,10 @@ function useRegion(map: MapType | undefined): RegionState {
 const OVERVIEW_SOURCE = "transitopia-transit-overview";
 
 /** What the overview draws: every region's feed. */
-const OVERVIEW_DATASETS = REGIONS.map((r) => r.config.feed.dataset);
+const OVERVIEW_DATASETS = REGIONS.flatMap((r) => [
+  r.config.feed.dataset,
+  ...(r.config.overlays ?? []).map((o) => o.feed.dataset),
+]);
 
 /**
  * Every region's routes zoomed out (packages/transit-core/DESIGN.md#overview-tiles), below the zoom

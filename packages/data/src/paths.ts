@@ -180,7 +180,11 @@ export async function readFeeds(): Promise<FeedInfo[]> {
 
 /** The first region showing a feed: whose config (kinematics, prediction) goes with it in scripts. */
 export async function regionOfFeed(feed: string): Promise<RegionInfo> {
-  const region = (await readRegions()).find((r) => r.feeds.includes(feed));
+  // The one where it's the primary feed, else one it's an overlay in (docs/DESIGN.md#overlay-feeds).
+  const regions = await readRegions();
+  const region =
+    regions.find((r) => r.feeds[0] === feed)
+    ?? regions.find((r) => r.feeds.includes(feed));
   if (!region) throw new Error(`No region shows feed ${feed}`);
   return region;
 }

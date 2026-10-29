@@ -229,6 +229,24 @@ describe("regions and feeds", () => {
       }
     });
 
+  it("overlay feeds are timetable routes along shapes, with AIS at most", () => {
+    // A region's feeds after the first are drawn over it (docs/DESIGN.md#overlay-feeds), which has
+    // no bus real time, track-level rail, route groups of its own or cards for them.
+    for (const { id, region } of regions)
+      for (const f of region.feeds.slice(1)) {
+        const feed = feeds.find((x) => x.id === f)!.feed;
+        expect(feed.realtime, `${id}: ${f}`).toBeUndefined();
+        const routes = parseConfig(
+          "routes",
+          readJson(join(FEEDS, f, "routes.json")),
+        );
+        for (const r of routes.routes)
+          expect(["skytrain", "bus"], `${id}: ${f}: ${r.key}`).not.toContain(
+            r.kind,
+          );
+      }
+  });
+
   it("feeds credit a registered dataset, with its real-time companion where they have real time", () => {
     for (const { id, feed } of feeds) {
       expect(DATASETS, id).toHaveProperty(feed.dataset);

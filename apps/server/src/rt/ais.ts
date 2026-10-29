@@ -43,7 +43,8 @@ type Socket = Pick<WebSocket, "send" | "close" | "addEventListener">;
 export interface AisFeedOptions {
   apiKey: string;
   cfg: AisConfig;
-  route: string;
+  /** The route keys its vessels run (feed.json → ais.routes). */
+  routes: readonly string[];
   recorder: Recorder;
   record?: boolean;
   log?: (msg: string) => void;
@@ -262,7 +263,14 @@ export class AisFeed {
       await this.opts.recorder.record({
         fetchedAt: now,
         headerTs: now,
-        vehicles: batch.map((f) => fixToVehicle(f, this.opts.route)),
+        // A fix's trip, and so its route, is the browser's to match (ais/match.ts): one route when
+        // the vessels have one (SeaBus), else none.
+        vehicles: batch.map((f) =>
+          fixToVehicle(
+            f,
+            this.opts.routes.length === 1 ? this.opts.routes[0]! : "",
+          ),
+        ),
       });
       await this.opts
         .onBatch?.(now, batch)

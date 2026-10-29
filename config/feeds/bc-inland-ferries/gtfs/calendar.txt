@@ -1,0 +1,3 @@
+service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date
+winter-2026,1,1,1,1,1,1,1,20260914,20270620
+on-demand-2026,1,1,1,1,1,1,1,20260914,20270620

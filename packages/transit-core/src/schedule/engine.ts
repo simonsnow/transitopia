@@ -492,6 +492,8 @@ export function scheduledVehicles(
       if (q.sec > t.visibleUntil || (t.next && q.sec === t.visibleUntil))
         continue;
       if (q.routes && !q.routes.has(t.route.key)) continue;
+      // A line only (routes.json → vehicles: false): on demand, nothing to place.
+      if (t.route.vehicles === false) continue;
       if (special.has(t)) continue;
       const v = positionOnTrip(
         pp,

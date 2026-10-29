@@ -1,0 +1,18 @@
+{
+  "$comment": "BC's Ministry of Transportation and Transit: the operator of the province's inland ferries (config/feeds/bc-inland-ferries/), run under contract (Western Pacific Marine answers for the Kootenay Lake ferry, per its page). These are the Kootenay Lake ferry's MV Osprey 2000, which runs every winter sailing.",
+  "id": "bc-mott",
+  "name": "BC Inland Ferries",
+  "kinematics": {
+    "modes": {
+      "ferry": {
+        "$maxSpeed": "km/h. 8.97 km Balfour to Kootenay Bay (the OSM way's length) in 35 minutes, berth to berth: about 15 km/h on average, so cruising near 18 (guess; config/regions/kootenays/OPEN-QUESTIONS.md #5).",
+        "maxSpeed": 18,
+        "$length": "m. The Osprey 2000 carries 80 vehicles (BC government page, checked 2026-10-28); about 75 m long and 18 m wide (guess, from imagery; config/regions/kootenays/OPEN-QUESTIONS.md #5).",
+        "length": 75,
+        "width": 18,
+        "accel": 0.05,
+        "decel": 0.05
+      }
+    }
+  }
+}

@@ -40,8 +40,8 @@ export interface LiveVehiclesSection extends DataSection {
 export interface LiveAisSection extends DataSection {
   kind: "ais";
   encoding: "ais-fixes/1";
-  /** The route key the fixes correct. */
-  route: string;
+  /** The route keys the fixes correct. */
+  routes: string[];
   from: number;
   to: number;
   data: AisRow[];

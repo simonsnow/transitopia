@@ -65,7 +65,7 @@ const live = (
     "translink/ais": {
       kind: "ais",
       encoding: "ais-fixes/1",
-      route: "seabus",
+      routes: ["seabus"],
       status: "ok",
       from,
       to,

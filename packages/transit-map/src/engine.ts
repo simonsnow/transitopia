@@ -149,6 +149,13 @@ import {
 } from "./places.ts";
 import { loadPref, savePref } from "./prefs.ts";
 import type { RegionConfig } from "./config.ts";
+import { OverlayFeed } from "./overlay.ts";
+import {
+  overlaySources,
+  removeOverlayLayers,
+  syncOverlayLayers,
+  type OverlaySources,
+} from "./layers/overlay.ts";
 
 export type { Theme };
 export type { RtMode };
@@ -196,6 +203,8 @@ export interface SelectedVehicle {
   trip: { start: number; from: string; shortId: string } | undefined;
   /** Registry ids of the data behind it (@transitopia/shared/datasets.ts), for its card's credits. */
   datasets: string[];
+  /** From an overlay feed (overlay.ts): no route card or stop departures for it yet. */
+  overlay?: true | undefined;
 }
 
 export type { Place };
@@ -447,6 +456,12 @@ export class TransitEngine {
   private shownHubs: BusHub[] | undefined;
   /** The feed the engine shows (its vehicles' `rt` refs are in it). */
   private readonly feed: string;
+  /** Feeds drawn over it (overlay.ts): their vehicles' ids and route keys are prefixed by the feed. */
+  private readonly overlays: { feed: OverlayFeed; ids: OverlaySources }[];
+  /** Each overlay's plan and hidden routes its layers were last drawn with (syncOverlays). */
+  private overlayShown = new Map<string, string>();
+  /** The map sources this engine adds: the primary's and its overlays'. */
+  private readonly sources: string[];
   /** A `?select=` key waiting for the plan and its places file. */
   private pendingSelect: string | undefined;
   /** A `?select=` key this plan doesn't have (TransitSnapshot.elsewhere). */
@@ -482,23 +497,47 @@ export class TransitEngine {
     map: MlMap,
     opts: TransitEngineOptions,
   ): Promise<TransitEngine> {
-    const store = await PlanStore.load(
-      opts.dataBase,
-      opts.apiBase,
-      opts.region,
-      opts.config,
-      opts.scenario,
+    // A scenario shows the primary feed's network only.
+    const [store, overlays] = await Promise.all([
+      PlanStore.load(
+        opts.dataBase,
+        opts.apiBase,
+        opts.region,
+        opts.config,
+        opts.scenario,
+      ),
+      opts.scenario ?
+        Promise.resolve<(OverlayFeed | undefined)[]>([])
+      : Promise.all(
+          (opts.config.overlays ?? []).map((o) =>
+            OverlayFeed.load(opts.dataBase, opts.region, o),
+          ),
+        ),
+    ]);
+    return new TransitEngine(
+      map,
+      store,
+      opts,
+      overlays.filter((o): o is OverlayFeed => o !== undefined),
     );
-    return new TransitEngine(map, store, opts);
   }
 
   private constructor(
     map: MlMap,
     store: PlanStore,
     opts: TransitEngineOptions,
+    overlays: OverlayFeed[],
   ) {
     this.map = map;
     this.store = store;
+    this.overlays = overlays.map((feed) => ({
+      feed,
+      ids: overlaySources(opts.region, feed.feed),
+    }));
+    this.sources = [
+      ...SOURCES,
+      ...this.overlays.flatMap((o) => [o.ids.lines, o.ids.stops]),
+    ];
     this.theme = opts.theme;
     this.debug = opts.debug ?? false;
     this.defaultDataset = opts.dataset;
@@ -533,11 +572,15 @@ export class TransitEngine {
       loadPref<string>("busFrequency", "now") === "day" ? "day" : "now";
 
     this.vehicles = new VehicleLayer(map, opts.config.kinematics.sizing);
-    const { modes, routes } = opts.config.kinematics;
     this.maxSpeedMps =
       Math.max(
-        ...Object.values(modes).map((k) => k.maxSpeed),
-        ...Object.values(routes).map((k) => k.maxSpeed ?? 0),
+        ...[
+          opts.config.kinematics,
+          ...(opts.config.overlays ?? []).map((o) => o.kinematics),
+        ].flatMap(({ modes, routes }) => [
+          ...Object.values(modes).map((k) => k.maxSpeed),
+          ...Object.values(routes).map((k) => k.maxSpeed ?? 0),
+        ]),
       ) / 3.6;
     this.vehicles.selectedId = this.selectedId;
     const regionBase =
@@ -558,6 +601,7 @@ export class TransitEngine {
         onResponse: (r, receivedAt) => {
           this.rt.acceptLive(r, receivedAt);
           this.ais.acceptLive(r);
+          for (const { feed } of this.overlays) feed.ais?.acceptLive(r);
           store.setLiveDispatch(sectionsOfKind(r, "dispatch")[0]?.versions);
         },
         onError: (error, missing) => this.rt.liveFailed(error, missing),
@@ -566,6 +610,14 @@ export class TransitEngine {
     );
     // SeaBus: AIS fixes anchor the timetable (packages/transit-core/DESIGN.md#seabus-ais).
     this.ais = new AisClient(regionBase, opts.config, () => this.live.fresh);
+    // Overlay feeds' vessels too (BC Ferries), from the same live poll and day files.
+    for (const { feed } of this.overlays)
+      if (feed.info.ais)
+        feed.ais = new AisClient(
+          regionBase,
+          { rt: opts.config.rt, feed: feed.info },
+          () => this.live.fresh,
+        );
     // Schedule estimates for buses stop at stops, using the same travel-time profile as live prediction.
     store.pacerFor = (pp) => this.rt.predictorFor(pp)?.pacer;
     this.snapshot = this.buildSnapshot(this.clock.now());
@@ -643,17 +695,13 @@ export class TransitEngine {
     };
     // A source loading tiles fires sourcedata; one showing tiles it already had may not: idle
     // catches those.
+    const lineSources = [
+      LINES_SOURCE,
+      ...this.overlays.map(({ ids }) => ids.lines),
+    ];
     const onSourceData = (e: { sourceId?: string }) => {
-      if (
-        this.linesReady
-        || !this.visible
-        || (e.sourceId !== undefined && e.sourceId !== LINES_SOURCE)
-        || !map.getSource(LINES_SOURCE)
-        || !map.isSourceLoaded(LINES_SOURCE)
-      )
-        return;
-      this.linesReady = true;
-      this.publish();
+      if (e.sourceId === undefined || lineSources.includes(e.sourceId))
+        this.checkLinesReady();
     };
     map.on("sourcedata", onSourceData);
     const onIdle = () => onSourceData({});
@@ -707,6 +755,26 @@ export class TransitEngine {
       }),
       this.rt.onChange(invalidate),
       this.ais.onChange(invalidate),
+      ...this.overlays.flatMap(({ feed }) =>
+        feed.ais ? [feed.ais.onChange(invalidate)] : [],
+      ),
+      ...this.overlays.map(({ feed }) =>
+        feed.store.onChange(() => {
+          // Its data rebuilt: the engine is made again, as for the primary's.
+          if (feed.store.rebuilt) {
+            if (!rebuilt) {
+              rebuilt = true;
+              this.writeUrl();
+              opts.onRebuilt?.();
+            }
+            return;
+          }
+          this.syncHidden();
+          this.syncOverlays();
+          this.checkLinesReady();
+          this.invalidate();
+        }),
+      ),
     );
 
     this.raf = requestAnimationFrame(this.frame);
@@ -788,8 +856,16 @@ export class TransitEngine {
   private syncHidden(): void {
     const pp = this.shownFeed;
     const groups = pp ? this.groupsOf(pp) : new Map<string, RouteGroup[]>();
+    const t = this.clock.now();
     const hidden = new Set(
-      [...groups]
+      [
+        ...groups,
+        ...this.overlays.flatMap(({ feed }) =>
+          feed
+            .routesAt(t)
+            .map((r): [string, readonly RouteGroup[]] => [r.key, r.groups]),
+        ),
+      ]
         .filter(([, gs]) => gs.every((g) => this.hiddenGroups.has(g)))
         .map(([key]) => key),
     );
@@ -802,7 +878,75 @@ export class TransitEngine {
     if (this.styleReady) {
       applyRouteFilter(this.map, this.hidden);
       applyTrackFilter(this.map, this.hidden);
+      this.syncOverlays();
     }
+  }
+
+  /**
+   * Overlay feeds' lines and terminals (layers/overlay.ts) for the plans shown, with their hidden
+   * routes, and their vehicles' colours; again after a new style (`force`).
+   */
+  private syncOverlays(force = false): void {
+    if (!this.visible || !this.styleReady || this.disposed) return;
+    if (force) this.overlayShown.clear();
+    const t = this.clock.now();
+    let added = false;
+    for (const { feed, ids } of this.overlays) {
+      const pp = feed.planAt(t, Infinity);
+      const tiles = pp && feed.store.tilesUrl(pp);
+      if (!pp || !tiles) continue;
+      const hidden = [...this.hidden]
+        .filter((k) => feed.owns(k))
+        .map((k) => k.slice(feed.feed.length + 1));
+      const state = `${tiles}|${pp.plan.feedVersion}|${this.theme}|${hidden.join(",")}`;
+      if (this.overlayShown.get(feed.feed) === state) continue;
+      this.overlayShown.set(feed.feed, state);
+      syncOverlayLayers(this.map, ids, pp.plan, tiles, this.theme, hidden);
+      this.vehicles.setRouteColors(
+        feed.routesAt(t).map((r) => ({ key: r.key, color: r.route.color })),
+      );
+      added = true;
+    }
+    // Vehicles stay above the overlays' lines.
+    if (added) this.vehicles.attach();
+  }
+
+  /**
+   * Whether the map draws every line it will (`linesReady`, until which the host keeps the overview
+   * tiles on, so zooming in or switching regions never leaves the map without them): the primary's
+   * tiles have loaded, and each overlay's, unless it has nothing to draw now (no timetable for the
+   * date, or its plan failed to load).
+   */
+  private checkLinesReady(): void {
+    const { map } = this;
+    if (this.linesReady || !this.visible) return;
+    const loaded = (source: string) =>
+      map.getSource(source) !== undefined && map.isSourceLoaded(source);
+    if (!loaded(LINES_SOURCE)) return;
+    const t = this.clock.now();
+    for (const { feed, ids } of this.overlays) {
+      const pp = feed.planAt(t, Infinity);
+      if (!pp) {
+        if (feed.store.unavailable(displayServiceDate(t))) continue;
+        return;
+      }
+      if (feed.store.tilesUrl(pp) && !loaded(ids.lines)) return;
+    }
+    this.linesReady = true;
+    this.publish();
+  }
+
+  /** The overlay a vehicle id or route key belongs to, if any. */
+  private overlayOf(idOrKey: string | undefined): OverlayFeed | undefined {
+    return this.overlays.find(({ feed }) => feed.owns(idOrKey))?.feed;
+  }
+
+  /** A vehicle's route: its overlay's, or the shown plan's. */
+  private routeOfVehicle(v: VehicleState, t: number): PlanRoute | undefined {
+    const overlay = this.overlayOf(v.id);
+    return overlay ?
+        overlay.routeOf(t, v.routeKey)
+      : this.shownFeed?.routes.get(v.routeKey);
   }
 
   setStopsShown(shown: boolean): void {
@@ -1621,7 +1765,7 @@ export class TransitEngine {
       for (const layer of map.getStyle()?.layers ?? [])
         if (
           "source" in layer
-          && SOURCES.includes(layer.source)
+          && this.sources.includes(layer.source)
           && map.getLayoutProperty(layer.id, "visibility") !== "none"
         ) {
           this.hiddenLayers.push(layer.id);
@@ -1657,6 +1801,7 @@ export class TransitEngine {
     this.live.stop();
     this.vehicles.detach();
     removeSources(this.map, SOURCES);
+    for (const { ids } of this.overlays) removeOverlayLayers(this.map, ids);
     this.listeners.clear();
   }
 
@@ -1779,12 +1924,14 @@ export class TransitEngine {
         undefined
       : (() => {
           const v = this.lastVehicles.find((x) => x.id === this.selectedId);
-          const route = v ? this.shownFeed?.routes.get(v.routeKey) : undefined;
+          const route = v ? this.routeOfVehicle(v, t) : undefined;
+          const overlay = this.overlayOf(this.selectedId);
           return {
             id: this.selectedId,
             vehicle: v,
             route,
-            trip: v && this.tripSummary(v),
+            trip: v && (overlay ? overlay.tripSummary(v) : this.tripSummary(v)),
+            ...(overlay ? { overlay: true as const } : {}),
             datasets: this.datasetsOf([
               [route, v !== undefined && v.provenance !== "estimated"],
             ]),
@@ -1966,6 +2113,7 @@ export class TransitEngine {
           && setDebugPlatforms(map, TrackGraph.fromCollection(tracks), plan, p),
       );
     }
+    this.syncOverlays(true);
     this.vehicles.attach();
     this.vehicles.setRouteColors(pp.plan.routes);
     this.routeColorsFor = undefined;
@@ -2199,6 +2347,11 @@ export class TransitEngine {
         ...carried,
       ];
     } else this.lastVehicles = scheduled.map(asBus);
+    // Overlay feeds' vehicles (timetable only), after the primary's.
+    for (const { feed } of this.overlays)
+      this.lastVehicles.push(
+        ...feed.vehiclesAt(t, this.hidden, this.selectedId),
+      );
     if (this.selectedId)
       this.selectedRoute =
         this.lastVehicles.find((v) => v.id === this.selectedId)?.routeKey
@@ -2220,7 +2373,7 @@ export class TransitEngine {
       this.rtState = { mode: live.mode, label, title: fullTitle };
       this.dirty = true;
     }
-    this.datasets = this.datasetsDrawn(live.vehicles ?? [], aisUsed);
+    this.datasets = this.datasetsDrawn(t, live.vehicles ?? [], aisUsed);
 
     if (this.styleReady)
       this.vehicles.update(
@@ -2255,6 +2408,7 @@ export class TransitEngine {
 
   /** What the map shows right now, for the attribution control (docs/DESIGN.md#attribution). */
   private datasetsDrawn(
+    t: number,
     rtVehicles: readonly VehicleState[],
     aisUsed: boolean,
   ): string[] {
@@ -2263,8 +2417,14 @@ export class TransitEngine {
       ...routeKeys(this.shownFeed)
         .filter((k) => !this.hidden.has(k))
         .map((k): [PlanRoute | undefined, boolean] => [routes?.get(k), false]),
+      ...this.overlays.flatMap(({ feed }) =>
+        feed
+          .routesAt(t)
+          .filter((r) => !this.hidden.has(r.key))
+          .map((r): [PlanRoute | undefined, boolean] => [r.route, false]),
+      ),
       ...this.lastVehicles.map((v): [PlanRoute | undefined, boolean] => [
-        routes?.get(v.routeKey),
+        this.routeOfVehicle(v, t),
         false,
       ]),
       ...rtVehicles.map((v): [PlanRoute | undefined, boolean] => [
@@ -2272,7 +2432,8 @@ export class TransitEngine {
         true,
       ]),
     ]);
-    if (aisUsed) out.push("aisstream");
+    if (aisUsed || this.overlays.some(({ feed }) => feed.aisUsed))
+      out.push("aisstream");
     // The track network is imported from OpenStreetMap plus our overrides; corrections are ours.
     if (this.tracks) out.push("osm", "transitopia");
     return out;
@@ -2285,6 +2446,7 @@ export class TransitEngine {
       clock: this.clock,
       store: this.store,
       rt: this.rt,
+      overlays: this.overlays.map((o) => o.feed),
       vehicles: () => this.lastVehicles,
     };
   }

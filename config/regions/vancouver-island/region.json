@@ -1,9 +1,10 @@
 {
   "$comment": "Region record (docs/DESIGN.md#regions-and-feeds). bbox: where this region's transit data applies, every system from Victoria to Port Hardy and Tofino to Gibsons, [west, south, east, north]. areas: where the site shows it, two rectangles round Metro Vancouver's bbox (south of 48.95° N, east to Victoria; north of it, east to Langdale). initialBounds: the first view of /transit when the URL has no map position (Victoria's routes, Langford to Swartz Bay and UVic).",
   "id": "vancouver-island",
+  "$feeds": "BC Transit's systems, its primary feed, and BC Ferries' sailings over it (docs/DESIGN.md#overlay-feeds), also shown in Metro Vancouver.",
   "name": "Vancouver Island and Sunshine Coast",
   "timezone": "America/Vancouver",
-  "feeds": ["bc-transit-vancouver-island"],
+  "feeds": ["bc-transit-vancouver-island", "bc-ferries"],
   "bbox": [-127.65, 48.3, -123.2, 50.78],
   "areas": [
     [-125.98, 48.3, -123.2, 48.95],

@@ -1,0 +1,34 @@
+{
+  "$comment": "How BC Ferries' routes are drawn where the GTFS alone doesn't say; every route in the feed is drawn by default (route_type 4: ferries along their shapes, in their own colour), and the format is in config/feeds/translink/routes.json. The GTFS gives every route 000000 (export of 2026-10-09), which counts as no colour, so noColor gives them one sea blue of our own (not BC Ferries' branding, which we don't use). The major routes run the big vessels.",
+  "noColor": "#2a6f97",
+  "routes": [
+    {
+      "key": "tsawwassen-swartz-bay",
+      "label": "Tsawwassen – Swartz Bay",
+      "match": { "route_long_name": "Vancouver - Victoria (Tsawwassen-Swartz Bay)" },
+      "$kinematics": "Spirit and Coastal class: 160-167 m, 28-32 m wide, about 21 knots (BC Ferries fleet pages, checked 2026-10-28).",
+      "kinematics": { "length": 165, "width": 30, "maxSpeed": 39 }
+    },
+    {
+      "key": "horseshoe-bay-departure-bay",
+      "label": "Horseshoe Bay – Departure Bay",
+      "match": { "route_long_name": "West Vancouver - Nanaimo (Horseshoe Bay-Departure Bay)" },
+      "$kinematics": "Coastal class and C class (139-160 m), about 20 knots (BC Ferries fleet pages, checked 2026-10-28).",
+      "kinematics": { "length": 150, "width": 27, "maxSpeed": 37 }
+    },
+    {
+      "key": "tsawwassen-duke-point",
+      "label": "Tsawwassen – Duke Point",
+      "match": { "route_long_name": "Vancouver - Nanaimo (Tsawwassen-Duke Point)" },
+      "$kinematics": "Coastal class, about 21 knots (BC Ferries fleet pages, checked 2026-10-28).",
+      "kinematics": { "length": 160, "width": 28, "maxSpeed": 39 }
+    },
+    {
+      "key": "horseshoe-bay-langdale",
+      "label": "Horseshoe Bay – Langdale",
+      "match": { "route_long_name": "West Van - Sunshine Coast (Horseshoe Bay-Langdale)" },
+      "$kinematics": "C class (139 m), about 19 knots (BC Ferries fleet pages, checked 2026-10-28; guess within that).",
+      "kinematics": { "length": 139, "width": 26, "maxSpeed": 35 }
+    }
+  ]
+}

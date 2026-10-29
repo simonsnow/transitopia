@@ -1,0 +1,18 @@
+{
+  "$comment": "Region record (docs/DESIGN.md#regions-and-feeds). bbox: where this region's transit data applies, West Kootenay, Creston Valley and Revelstoke, from Rossland to Revelstoke, Kaslo and Creston, [west, south, east, north]. initialBounds: the first view of /transit when the URL has no map position (Nelson).",
+  "id": "kootenays",
+  "$feeds": "BC Transit's Kootenay systems, its primary feed, and the Kootenay Lake ferry over it (docs/DESIGN.md#overlay-feeds).",
+  "name": "Kootenays",
+  "timezone": "America/Vancouver",
+  "feeds": ["bc-transit-kootenays", "bc-inland-ferries"],
+  "bbox": [-118.3, 48.95, -116.3, 51.1],
+  "initialBounds": [-117.36, 49.45, -117.2, 49.53],
+  "$timezoneChecks": "BC moved to permanent UTC-7 in 2026 (tzdata 2026b, https://data.iana.org/time-zones/tzdb/NEWS); the server refuses to start with outdated time zone data.",
+  "timezoneChecks": [
+    {
+      "at": "2026-11-02T20:00:00Z",
+      "utcOffsetMinutes": -420,
+      "reason": "British Columbia's permanent UTC-7 (tzdata 2026b or later)"
+    }
+  ]
+}

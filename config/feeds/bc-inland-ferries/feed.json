@@ -1,0 +1,16 @@
+{
+  "$comment": "BC's inland ferries, free ferries run by the Ministry of Transportation and Transit, which publishes their schedules only as web pages (https://www2.gov.bc.ca/gov/content/transportation/passenger-travel/water-travel/inland-ferries): no GTFS. So this is a GTFS of our own, transcribed from those pages (static.dir → gtfs/). For now the Kootenay Lake ferry, Balfour to Kootenay Bay, and the Harrop and Glade cable ferries, which run on demand with no timetable to draw vessels from: lines only (routes.json → vehicles: false). Shown over the Kootenays region's buses (docs/DESIGN.md#overlay-feeds).",
+  "id": "bc-inland-ferries",
+  "name": "BC Inland Ferries",
+  "operator": "bc-mott",
+  "timezone": "America/Vancouver",
+  "dataset": "bc-inland-ferries",
+  "static": {
+    "$comment": "gtfs/ was written on 2026-10-28 from the Kootenay Lake Ferry page (last updated 2026-09-13): its winter schedule, 'in effect as of September 14, 2026, until the third week of June 2027', every sailing by the Osprey 2000, 10 from Balfour (06:30-21:40) and 10 from Kootenay Bay (07:10-22:20), every day, 35-minute crossings. The schedule ends on 2027-06-20, a guess for 'the third week of June' (config/regions/kootenays/OPEN-QUESTIONS.md #4); the page lists no holiday changes. Terminals and the crossing's path are OpenStreetMap's Kootenay Lake Ferry way (https://www.openstreetmap.org/way/32895879, duration 00:35; © OpenStreetMap contributors, ODbL). The cable ferries' crossings are OpenStreetMap's Harrop Ferry (https://www.openstreetmap.org/way/32895640) and Glade Cable Ferry (https://www.openstreetmap.org/way/91791021) ways; each has one trip per direction at 12:00 on every day (service on-demand-2026), only to describe the crossing. A new schedule (the summer one, with the MV Balfour's extra sailings) means editing gtfs/ and its feed_info.txt version.",
+    "dir": "gtfs"
+  },
+  "display": {
+    "$feedVersion": "Our own versions: the date of the change and what changed (2026-09-14-winter, then 2026-10-28-cable-ferries).",
+    "feedVersion": "^(.+)$"
+  }
+}

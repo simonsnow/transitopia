@@ -1,0 +1,25 @@
+{
+  "$comment": "How BC's inland ferries are drawn where the GTFS alone doesn't say; the format is in config/feeds/translink/routes.json. Our own GTFS (gtfs/) gives no route colours, so noColor draws them in the sea blue we draw BC Ferries in (config/feeds/bc-ferries/routes.json): ferries look alike.",
+  "noColor": "#2a6f97",
+  "routes": [
+    {
+      "key": "kootenay-lake",
+      "label": "Kootenay Lake Ferry",
+      "match": { "route_long_name": "Kootenay Lake Ferry" }
+    },
+    {
+      "key": "harrop",
+      "label": "Harrop Cable Ferry",
+      "match": { "route_long_name": "Harrop Cable Ferry" },
+      "$vehicles": "On demand, 24 hours (its page, 2026-08-21): no timetable to place the vessel by, so a line only.",
+      "vehicles": false
+    },
+    {
+      "key": "glade",
+      "label": "Glade Cable Ferry",
+      "match": { "route_long_name": "Glade Cable Ferry" },
+      "$vehicles": "On demand, 05:00-02:20 (its page, 2026-08-21): a line only.",
+      "vehicles": false
+    }
+  ]
+}

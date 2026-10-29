@@ -610,6 +610,20 @@ export class PlanStore {
     return ready ? v.pp : undefined;
   }
 
+  /**
+   * Whether there's no plan for a date to wait for: no feed version covers it, or its plan failed
+   * to load (it's tried again later). False while it loads, and once it's in.
+   */
+  unavailable(date: ServiceDate): boolean {
+    const feed = feedForDate(this.manifest, date);
+    if (!feed) return true;
+    return (
+      !this.versions.has(feed.version)
+      && !this.loading.has(feed.version)
+      && this.failed.has(feed.version)
+    );
+  }
+
   /** A published file, parsed. */
   private async getJson<T>(path: string): Promise<T> {
     const r = await fetch(this.dataUrl(path));

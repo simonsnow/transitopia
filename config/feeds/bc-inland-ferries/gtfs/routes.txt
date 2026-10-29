@@ -1,0 +1,4 @@
+agency_id,route_id,route_short_name,route_long_name,route_type
+bc-inland-ferries,kootenay-lake,,Kootenay Lake Ferry,4
+bc-inland-ferries,harrop,,Harrop Cable Ferry,4
+bc-inland-ferries,glade,,Glade Cable Ferry,4

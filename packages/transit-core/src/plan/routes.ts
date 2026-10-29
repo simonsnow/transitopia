@@ -171,12 +171,15 @@ export function selectRoutes(
       key,
       name,
       label: over?.label ?? defaultLabel(row, name),
+      ...(over?.vehicles === false ? { vehicles: false as const } : {}),
       kind: over?.kind ?? model!.kind,
       mode,
       brand: over?.brand ?? mode !== "bus",
       color:
         over?.color
-        ?? (placeholder(row) ? NO_COLOR : hexColor(row.route_color, NO_COLOR)),
+        ?? (placeholder(row) ?
+          (cfg.noColor ?? NO_COLOR)
+        : hexColor(row.route_color, cfg.noColor ?? NO_COLOR)),
       textColor: hexColor(row.route_text_color, "#ffffff"),
       gtfsRouteId: row.route_id!,
       ...(dataset ? { dataset } : {}),

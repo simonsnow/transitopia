@@ -237,6 +237,11 @@ const route = z.strictObject({
   mode: z.enum(routeModes).exactOptional(),
   /** Drawn in its own colour (`PlanRoute.brand`): by default rail and ferries, not buses. */
   brand: z.boolean().exactOptional(),
+  /**
+   * false: drawn as a line only, with no vehicles (`PlanRoute.vehicles`), for service on demand with
+   * no timetable to place them by (BC's cable ferries); its GTFS trips only describe the crossing.
+   */
+  vehicles: z.literal(false).exactOptional(),
   color: z
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/, "expected #rrggbb")
@@ -246,6 +251,11 @@ const route = z.strictObject({
 });
 
 const routes = z.strictObject({
+  /** The colour of routes without one of their own in the GTFS (default #666666; plan/routes.ts). */
+  noColor: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/, "expected #rrggbb")
+    .exactOptional(),
   routes: z
     .array(route)
     .refine(
@@ -368,8 +378,8 @@ const seabus = z.strictObject({
 
 /** A feed's vessels' AIS positions (feed.json → ais; packages/transit-core/DESIGN.md#seabus-ais). */
 const feedAis = z.strictObject({
-  /** The route (routes.json key) whose vessels these are. */
-  route: z.string().min(1),
+  /** The routes (route keys) whose vessels these are: fixes are matched to their trips (ais/match.ts). */
+  routes: z.array(z.string().min(1)).min(1),
   vessels: z
     .array(
       z.strictObject({
@@ -475,8 +485,22 @@ const feed = z.strictObject({
     .strictObject({
       /** The latest GTFS feed. */
       url: httpsUrl.exactOptional(),
+      /**
+       * Instead of `url`: a GTFS we wrote ourselves, its files committed in this directory of the
+       * feed's (config/feeds/<feed>/<dir>/), for service published only as a web page (BC's inland
+       * ferries). fetch-gtfs zips it.
+       */
+      dir: z
+        .string()
+        .regex(/^[a-z0-9-]+$/, "a directory name")
+        .exactOptional(),
       /** A dated snapshot ({date}: YYYY-MM-DD), where the provider keeps them. */
       historyUrl: z.string().includes("{date}").exactOptional(),
+      /**
+       * The agency_timezone the GTFS states, where it isn't the one its times are in: they're read
+       * in `timezone` (BC Ferries' says America/Los_Angeles, which BC no longer agrees with).
+       */
+      statedTimezone: z.string().min(1).exactOptional(),
       /**
        * Instead of `url`: several GTFS feeds that fetch-gtfs merges into one, each its own agency
        * (packages/data/src/gtfs-merge.ts), e.g. a provider's transit systems that meet. Where two
@@ -492,8 +516,9 @@ const feed = z.strictObject({
         .exactOptional(),
     })
     .refine(
-      (s) => (s.url === undefined) !== (s.parts === undefined),
-      "static needs url or parts, not both",
+      (s) =>
+        [s.url, s.parts, s.dir].filter((x) => x !== undefined).length === 1,
+      "static needs one of url, parts and dir",
     )
     .refine(
       (s) => s.historyUrl === undefined || s.url !== undefined,

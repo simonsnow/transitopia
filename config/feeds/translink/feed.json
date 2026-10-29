@@ -49,7 +49,7 @@
   },
   "ais": {
     "$comment": "Live vessel positions from aisstream.io (packages/transit-core/DESIGN.md#seabus-ais; key AISSTREAM_API_KEY in .secrets). The RT service's leader keeps one WebSocket open, records fixes to var/ais-history/translink/ and serves them by the day and in the live endpoint (<feed>/ais); the browser turns them into timetable anchors (packages/transit-core/src/ais/match.ts).",
-    "route": "seabus",
+    "routes": ["seabus"],
     "$vessels": "MMSIs from MarineTraffic / VesselFinder / MyShipTracking, cross-checked (2026-09-28). Burrard Beaver is the spare.",
     "vessels": [
       { "mmsi": "316011649", "name": "Burrard Beaver" },

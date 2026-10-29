@@ -275,7 +275,7 @@ export class RtService {
           new AisFeed({
             apiKey: aisKey,
             cfg,
-            route: cfg.route,
+            routes: cfg.routes,
             recorder: new Recorder(
               join(opts.aisHistoryDir ?? AIS_HISTORY_DIR, feed.id),
               cfg.coverageGapS * 1000,
@@ -503,7 +503,7 @@ export class RtService {
       return {
         kind: "ais",
         encoding: "ais-fixes/1",
-        route: a.cfg.route,
+        routes: a.cfg.routes,
         status: "unavailable",
         error: "No aisstream.io API key configured",
         from: 0,
@@ -515,7 +515,7 @@ export class RtService {
     const ais: LiveAisSection = {
       kind: "ais",
       encoding: "ais-fixes/1",
-      route: a.cfg.route,
+      routes: a.cfg.routes,
       status: st.connected ? "ok" : "stale",
       from: w.from,
       to: w.to,

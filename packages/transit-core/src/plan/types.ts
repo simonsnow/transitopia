@@ -18,6 +18,8 @@ export interface PlanRoute {
    */
   name?: string | undefined;
   label: string;
+  /** false: a line only, no vehicles (routes.json → vehicles; on-demand service). */
+  vehicles?: false | undefined;
   kind: RouteKind;
   mode: RouteMode;
   /**

@@ -165,6 +165,35 @@ describe("selectRoutes", () => {
     });
   });
 
+  it("colours routes without a colour of their own in noColor", () => {
+    const { routes } = selectRoutes(
+      [
+        row("a", "", "Tsawwassen - Swartz Bay", "4", "000000"),
+        row("b", "", "Horseshoe Bay - Langdale", "4", "000000"),
+      ],
+      cfg({ noColor: "#2a6f97", routes: [] }),
+      undefined,
+    );
+    expect(routes.map((r) => r.color)).toEqual(["#2a6f97", "#2a6f97"]);
+  });
+
+  it("keeps a line-only route's flag", () => {
+    const { routes } = selectRoutes(
+      [row("h", "", "Harrop Cable Ferry", "4")],
+      cfg({
+        routes: [
+          {
+            key: "harrop",
+            match: { route_long_name: "Harrop Cable Ferry" },
+            vehicles: false,
+          },
+        ],
+      }),
+      undefined,
+    );
+    expect(routes[0]).toMatchObject({ key: "harrop", vehicles: false });
+  });
+
   it("allows one key per agency in routes.json", () => {
     const entry = (agency?: string) => ({
       key: "1",

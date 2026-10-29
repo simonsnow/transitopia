@@ -45,13 +45,13 @@ type Anchors = { sched: number; shift: number }[];
 export function glideCorrections(
   pp: PreparedPlan,
   serviceDate: ServiceDate,
-  route: string,
+  routeKeys: readonly string[],
   shown: ScheduleCorrections | undefined,
   next: ScheduleCorrections,
   k: number,
   cfg: GlideConfig,
 ): Glide {
-  const routes = new Set([route]);
+  const routes = new Set(routeKeys);
   const byId = (vs: VehicleState[]) => new Map(vs.map((v) => [v.id, v]));
   const before = byId(
     scheduledVehicles(pp, { serviceDate, sec: k, routes }, shown),

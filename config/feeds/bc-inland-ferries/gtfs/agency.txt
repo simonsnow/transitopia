@@ -1,0 +1,2 @@
+agency_id,agency_name,agency_url,agency_timezone,agency_lang
+bc-inland-ferries,BC Inland Ferries,https://www2.gov.bc.ca/gov/content/transportation/passenger-travel/water-travel/inland-ferries,America/Vancouver,en

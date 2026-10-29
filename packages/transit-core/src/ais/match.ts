@@ -81,18 +81,21 @@ interface Match {
   anchor: boolean;
 }
 
-/** Corrections for one service date's vessels on `route` from its AIS fixes. */
+/**
+ * Corrections for one service date's vessels on `routes` (SeaBus; every BC Ferries route) from its
+ * AIS fixes: each fix is matched to the trip on any of them it fits best.
+ */
 export function aisCorrections(
   pp: PreparedPlan,
   serviceDate: ServiceDate,
   fixes: AisFix[],
-  route: string,
+  routes: readonly string[],
   cfg: AisMatchConfig,
 ): AisDay {
   const dayStart = serviceDayStart(serviceDate);
   const trips = [...pp.servicesOn(serviceDate)]
     .flatMap((s) => pp.tripsByService.get(s) ?? [])
-    .filter((t) => t.route.key === route);
+    .filter((t) => routes.includes(t.route.key));
   const out: AisDay = {
     corrections: {
       trips: new Map(),
@@ -105,7 +108,10 @@ export function aisCorrections(
   };
   if (!trips.length) return out;
 
-  const ferry = pp.plan.ferry?.route === route ? pp.plan.ferry : undefined;
+  const ferry =
+    pp.plan.ferry && routes.includes(pp.plan.ferry.route) ?
+      pp.plan.ferry
+    : undefined;
   if (ferry) {
     out.pair = berthPair(pp, fixes, cfg);
     if (out.pair !== ferry.default)

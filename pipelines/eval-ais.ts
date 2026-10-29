@@ -59,7 +59,7 @@ if (!fixes.length) {
   console.log(`No recorded AIS fixes for ${date} (var/ais-history/${FEED}/).`);
   process.exit(0);
 }
-const r = aisCorrections(pp, date, fixes, ais.route, cfg);
+const r = aisCorrections(pp, date, fixes, ais.routes, cfg);
 const dayStart = serviceDayStart(date);
 const hm = (ms: number) => formatServiceTime((ms - dayStart) / 1000, true);
 console.log(

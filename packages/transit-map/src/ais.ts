@@ -73,9 +73,9 @@ export class AisClient {
   error: string | undefined;
   /** URL prefix of the region on the RT service (…/regions/<id>/), or undefined for schedules only. */
   private readonly base: string | undefined;
-  /** The feed whose vessels these are, and their route. */
+  /** The feed whose vessels these are, and their routes. */
   private readonly feed: string;
-  private readonly route: string;
+  private readonly routes: readonly string[];
   private readonly match: AisMatchConfig | undefined;
   private readonly glide: GlideConfig | undefined;
   /** Vessel names by MMSI. */
@@ -93,7 +93,7 @@ export class AisClient {
     this.base = base;
     const ais = config.feed.ais;
     this.feed = config.feed.id;
-    this.route = ais?.route ?? "";
+    this.routes = ais?.routes ?? [];
     this.match = ais?.match;
     this.glide = ais?.glide;
     this.names = new Map(ais?.vessels.map((v) => [v.mmsi, v.name]));
@@ -159,7 +159,7 @@ export class AisClient {
     if (!d.fixes.length) return undefined;
     if (d.memo?.pp !== pp || d.memo.n !== d.fixes.length) {
       const prev = d.memo?.pp === pp ? d.memo : undefined;
-      const day = aisCorrections(pp, date, d.fixes, this.route, this.match!);
+      const day = aisCorrections(pp, date, d.fixes, this.routes, this.match!);
       let glide: (Glide & { from: number }) | undefined;
       if (prev && d.arrivedAt !== undefined) {
         // Glide from what was on screen when the fixes arrived (mid-glide, if one was running).
@@ -171,7 +171,7 @@ export class AisClient {
         const g = glideCorrections(
           pp,
           date,
-          this.route,
+          this.routes,
           shown,
           day.corrections,
           k,

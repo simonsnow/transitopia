@@ -216,7 +216,7 @@ describe("aisCorrections", () => {
       pp,
       DATE,
       [fix(t1Half + 120, 0.5, { cog: 180 })],
-      "seabus",
+      ["seabus"],
       cfg,
     );
     expect(r.matched).toBe(1);
@@ -252,7 +252,7 @@ describe("aisCorrections", () => {
       pp,
       DATE,
       [fix(28800 + 700, 0.97, { cog: 180 })],
-      "seabus",
+      ["seabus"],
       cfg,
     );
     expect([...r.corrections.trips.keys()]).toEqual(["t1"]);
@@ -261,12 +261,24 @@ describe("aisCorrections", () => {
   it("treats a docked vessel as late only once it misses its departure", () => {
     const dock = (sec: number) => fix(sec, 1, { sog: 0 });
     // Docked at North at 08:14: consistent with the timetable (t1 leaves 08:15).
-    const onTime = aisCorrections(pp, DATE, [dock(28800 + 840)], "seabus", cfg);
+    const onTime = aisCorrections(
+      pp,
+      DATE,
+      [dock(28800 + 840)],
+      ["seabus"],
+      cfg,
+    );
     expect(onTime.corrections.trips.get("t1")!.anchors).toEqual([
       { sched: 28800 + 900, shift: 0 },
     ]);
     // Still docked at 08:17: t1 is at least 2 min late.
-    const late = aisCorrections(pp, DATE, [dock(28800 + 1020)], "seabus", cfg);
+    const late = aisCorrections(
+      pp,
+      DATE,
+      [dock(28800 + 1020)],
+      ["seabus"],
+      cfg,
+    );
     expect(late.corrections.trips.get("t1")!.anchors).toEqual([
       { sched: 28800 + 900, shift: 120 },
     ]);
@@ -280,7 +292,7 @@ describe("aisCorrections", () => {
         { mmsi: "316011649", ts: at(29000), lat: 49.31, lon: -123.12, sog: 0 },
         fix(20000, 0.5),
       ],
-      "seabus",
+      ["seabus"],
       cfg,
     );
     expect(r.matched).toBe(0);
@@ -320,7 +332,7 @@ describe("berth pair of the day", () => {
       fpp,
       DATE,
       [docked(28800 + 840, Ne)],
-      "seabus",
+      ["seabus"],
       cfg,
     );
     expect(r.pair).toBe("west");
@@ -336,7 +348,7 @@ describe("berth pair of the day", () => {
         docked(28800 + 1740, Se),
         docked(28800 + 1750, Se),
       ],
-      "seabus",
+      ["seabus"],
       cfg,
     );
     expect(r.pair).toBe("east");
@@ -386,7 +398,7 @@ describe("glideCorrections", () => {
       pp,
       DATE,
       [fix(fixSec, 0.5, { cog: 180 })],
-      "seabus",
+      ["seabus"],
       cfg,
     ).corrections;
     return { next, k: fixSec + 20 };
@@ -394,7 +406,7 @@ describe("glideCorrections", () => {
 
   it("holds a vessel drawn ahead until the corrected timetable catches up", () => {
     const { next, k } = setup(40);
-    const g = glideCorrections(pp, DATE, "seabus", undefined, next, k, gcfg);
+    const g = glideCorrections(pp, DATE, ["seabus"], undefined, next, k, gcfg);
     expect(d(pos(g.corrections, k), pos(undefined, k))).toBeLessThan(1);
     expect(d(pos(g.corrections, k + 20), pos(undefined, k))).toBeLessThan(1);
     expect(g.until).toBeGreaterThan(k + 30);
@@ -406,7 +418,7 @@ describe("glideCorrections", () => {
 
   it("speeds up a vessel drawn behind until it reaches the corrected position", () => {
     const { next, k } = setup(-40);
-    const g = glideCorrections(pp, DATE, "seabus", undefined, next, k, gcfg);
+    const g = glideCorrections(pp, DATE, ["seabus"], undefined, next, k, gcfg);
     const start = pos(g.corrections, k);
     expect(d(start, pos(undefined, k))).toBeLessThan(1);
     expect(g.until).toBeGreaterThan(k + 3);
@@ -425,7 +437,15 @@ describe("glideCorrections", () => {
   it("jumps when the difference is too big, and leaves tiny ones alone", () => {
     for (const late of [-400, 1]) {
       const { next, k } = setup(late);
-      const g = glideCorrections(pp, DATE, "seabus", undefined, next, k, gcfg);
+      const g = glideCorrections(
+        pp,
+        DATE,
+        ["seabus"],
+        undefined,
+        next,
+        k,
+        gcfg,
+      );
       expect(g.until).toBe(k);
       expect(g.corrections.trips.get("t1")).toBe(next.trips.get("t1"));
     }
@@ -458,7 +478,7 @@ describe("AisFeed", () => {
           batchS: 3600,
           maxBackoffS: 60,
         },
-        route: "seabus",
+        routes: ["seabus"],
         recorder,
         log: () => {},
         connect: () => socket as any,
@@ -527,7 +547,7 @@ describe("AisFeed", () => {
       const again = new AisFeed({
         apiKey: "k",
         cfg: (feed as any).opts.cfg,
-        route: "seabus",
+        routes: ["seabus"],
         recorder: new Recorder(dir, 75_000),
         log: () => {},
         connect: () => socket as any,

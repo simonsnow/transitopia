@@ -1,0 +1,7 @@
+stop_id,stop_name,stop_lat,stop_lon
+balfour,Balfour Ferry Terminal,49.623491,-116.959967
+kootenay-bay,Kootenay Bay Ferry Terminal,49.674800,-116.873340
+harrop-a,Harrop Ferry Landing (Harrop),49.607631,-117.053897
+harrop-b,Harrop Ferry Landing (Highway 3A),49.611151,-117.054268
+glade-a,Glade Ferry Landing (Highway 3A),49.395470,-117.545944
+glade-b,Glade Ferry Landing (Glade),49.394885,-117.542608

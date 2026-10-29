@@ -1,0 +1,4 @@
+{
+  "$comment": "How BC Transit's West Kootenay, Creston Valley and Revelstoke routes are drawn where the GTFS alone doesn't say; every route in the feed is drawn by default, and the format is in config/feeds/translink/routes.json. Each system is an agency of its own (feed.json → static.parts), so entries match it by `agency`. No overrides: no RapidBus here, and each system gives its routes their own colours (exports of 2026-10-28).",
+  "routes": []
+}

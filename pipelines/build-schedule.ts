@@ -122,16 +122,20 @@ const STOP_OFFSET_WARN_M = 150;
  * routes into different bays of it share the stretch to it), in the frequency table. 19: routes
  * say whether they're drawn in their own colour (`brand`, in place of `category`), and carry their
  * stops and weekday speeds. 20: routes have a `name`, and a feed of several agencies (static.parts)
- * qualifies their keys by agency; an agency's one colour on every route counts as none.
+ * qualifies their keys by agency; an agency's one colour on every route counts as none. 21:
+ * routes can be lines only (`vehicles: false`).
  */
-const PLAN_FORMAT = 20;
+const PLAN_FORMAT = 21;
 
-/** Regions showing the feed with SeaBus berths and lanes (infrastructure/seabus.json): build-schedule applies them. */
+/**
+ * Regions with SeaBus berths and lanes (infrastructure/seabus.json) whose primary feed this is:
+ * build-schedule applies them. A region's overlay feeds (docs/DESIGN.md#overlay-feeds) aren't its SeaBus.
+ */
 async function ferryRegions(feed: string): Promise<string[]> {
   const out: string[] = [];
   for (const r of await readRegions())
     if (
-      r.feeds.includes(feed)
+      r.feeds[0] === feed
       && (await exists(
         join(REGIONS_DIR, r.id, "infrastructure", "seabus.json"),
       ))
@@ -215,10 +219,12 @@ export async function buildPlan(
   if (!info) throw new Error("feed_info.txt missing");
   // Service days and times are computed in TIMEZONE (packages/transit-core/src/time.ts), so every
   // feed has to be in it until regions carry their own (docs/DESIGN.md#regions-and-feeds).
+  // A GTFS stating the wrong zone says so in feed.json (static.statedTimezone).
+  const stated = feed.static.statedTimezone ?? feed.timezone;
   for (const a of await readCsvAll(zipPath, "agency.txt"))
-    if (a.agency_timezone !== feed.timezone || feed.timezone !== TIMEZONE)
+    if (a.agency_timezone !== stated || feed.timezone !== TIMEZONE)
       throw new Error(
-        `${feed.id}: agency ${a.agency_name} is in ${a.agency_timezone} and the feed says ${feed.timezone}; only ${TIMEZONE} is supported`,
+        `${feed.id}: agency ${a.agency_name} is in ${a.agency_timezone} and the feed says ${stated}; only ${TIMEZONE} is supported`,
       );
 
   // Routes: every one in the feed, as routes.json overrides or excludes them (matched by name).
