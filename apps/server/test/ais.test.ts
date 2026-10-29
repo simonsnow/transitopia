@@ -132,6 +132,7 @@ const cfg: AisMatchConfig = {
   courseToleranceDeg: 60,
   minTurnaroundS: 90,
   maxCarryTrips: 3,
+  dockedGraceS: 600,
   pairMinFixes: 2,
 };
 const at = (sec: number) => day + sec * 1000;
@@ -282,6 +283,99 @@ describe("aisCorrections", () => {
     expect(late.corrections.trips.get("t1")!.anchors).toEqual([
       { sched: 28800 + 900, shift: 120 },
     ]);
+  });
+
+  it("keeps a blockless incoming route visible at the dock and hands it off on the next matched route", () => {
+    const blocklessPlan: ServicePlan = {
+      ...plan,
+      feed: "bc-ferries",
+      routes: [
+        { ...plan.routes[0]!, key: "incoming" },
+        { ...plan.routes[0]!, key: "outgoing" },
+      ],
+      patterns: [
+        { ...plan.patterns[0]!, id: 0, route: "incoming" },
+        { ...plan.patterns[1]!, id: 1, route: "outgoing" },
+      ],
+      trips: [
+        {
+          id: "incoming",
+          pattern: 0,
+          service: "wk",
+          headsign: "To North",
+          start: 14 * 3600 + 120,
+          arr: [0, 720],
+        },
+        {
+          id: "outgoing",
+          pattern: 1,
+          service: "wk",
+          headsign: "To South",
+          start: 14 * 3600 + 960,
+          arr: [0, 720],
+        },
+      ],
+    };
+    const blockless = preparePlan(blocklessPlan, kin);
+    const incomingDock = fix(14 * 3600 + 870, 1, { sog: 0 });
+    const incomingDockAgain = fix(14 * 3600 + 1410, 1, { sog: 0 });
+    const outgoingDock = fix(14 * 3600 + 1560, 1, { sog: 0 });
+    const outboundTrip = blockless.tripIndex.get("outgoing")!;
+    const outbound = fix(schedTimeAt(outboundTrip, 220) + 540, 0.9, {
+      cog: 180,
+    });
+    const r = aisCorrections(
+      blockless,
+      DATE,
+      [incomingDock, incomingDockAgain, outgoingDock, outbound],
+      ["incoming", "outgoing"],
+      cfg,
+    );
+
+    const handoff = r.corrections.handoffs?.get("incoming");
+    expect(handoff?.tripId).toBe("outgoing");
+    expect(handoff?.at).toBeCloseTo(14 * 3600 + 1560, 6);
+    const atSec = (sec: number) =>
+      scheduledVehicles(blockless, { serviceDate: DATE, sec }, r.corrections);
+    expect(atSec(14 * 3600 + 1530).map((v) => v.routeKey)).toEqual([
+      "incoming",
+    ]);
+    expect(atSec(14 * 3600 + 1560).map((v) => v.routeKey)).toEqual([
+      "outgoing",
+    ]);
+  });
+
+  it("expires the docked incoming route after its configured grace when no next sailing is matched", () => {
+    const blocklessPlan: ServicePlan = {
+      ...plan,
+      feed: "bc-ferries",
+      routes: [{ ...plan.routes[0]!, key: "incoming" }],
+      patterns: [{ ...plan.patterns[0]!, id: 0, route: "incoming" }],
+      trips: [
+        {
+          id: "incoming",
+          pattern: 0,
+          service: "wk",
+          headsign: "To North",
+          start: 14 * 3600 + 120,
+          arr: [0, 720],
+        },
+      ],
+    };
+    const blockless = preparePlan(blocklessPlan, kin);
+    const r = aisCorrections(
+      blockless,
+      DATE,
+      [fix(14 * 3600 + 870, 1, { sog: 0 })],
+      ["incoming"],
+      cfg,
+    );
+    const atSec = (sec: number) =>
+      scheduledVehicles(blockless, { serviceDate: DATE, sec }, r.corrections);
+    expect(atSec(14 * 3600 + 1200).map((v) => v.routeKey)).toEqual([
+      "incoming",
+    ]);
+    expect(atSec(14 * 3600 + 1500)).toHaveLength(0);
   });
 
   it("ignores vessels away from the route (layup berth) and outside service", () => {

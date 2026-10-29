@@ -72,6 +72,8 @@
       "$minTurnaroundS": "Loading and unloading a large ferry takes 20 minutes or more (guess).",
       "minTurnaroundS": 1200,
       "maxCarryTrips": 3,
+      "$dockedGraceS": "Keep the incoming route visible while the next sailing is not yet matched; 10 min covers the observed 100–500 s AIS intervals (config/regions/vancouver-island/OPEN-QUESTIONS.md #8).",
+      "dockedGraceS": 600,
       "pairMinFixes": 2
     },
     "$glide": "Smoothing when new fixes move a vessel: larger distances than SeaBus's, since fixes are minutes apart (guesses).",

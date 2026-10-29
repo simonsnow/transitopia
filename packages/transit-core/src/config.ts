@@ -357,6 +357,7 @@ const aisMatch: z.ZodType<AisMatchConfig> = z.strictObject({
   courseToleranceDeg: z.number().min(0).max(180),
   minTurnaroundS: nonNeg,
   maxCarryTrips: count,
+  dockedGraceS: pos,
   pairMinFixes: z.number().int().positive(),
 });
 
