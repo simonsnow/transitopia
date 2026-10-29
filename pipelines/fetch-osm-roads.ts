@@ -24,6 +24,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { archivedFeeds } from "@transitopia/data/gtfs-day.ts";
+import { OVERPASS_ENDPOINTS } from "@transitopia/data/overpass.ts";
 import { readCsv } from "@transitopia/data/gtfs-zip.ts";
 import {
   feedPaths,
@@ -32,10 +33,7 @@ import {
   readRegions,
 } from "@transitopia/data/paths.ts";
 
-const ENDPOINTS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
-];
+const ENDPOINTS = OVERPASS_ENDPOINTS;
 const ROAD_CLASSES = [
   "motorway",
   "motorway_link",

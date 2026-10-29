@@ -7,6 +7,7 @@
 // OSM data © OpenStreetMap contributors, ODbL.
 
 import { mkdir, writeFile, copyFile } from "node:fs/promises";
+import { OVERPASS_ENDPOINTS } from "@transitopia/data/overpass.ts";
 import { join } from "node:path";
 import {
   RAW_DIR,
@@ -22,10 +23,7 @@ const REGION =
   regionArg >= 0 ? process.argv[regionArg + 1]! : (await railNetwork()).region;
 const [west, south, east, north] = (await readRegion(REGION)).bbox;
 const BBOX = [south, west, north, east].join(",");
-const ENDPOINTS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
-];
+const ENDPOINTS = OVERPASS_ENDPOINTS;
 
 // Tracks: every railway=subway way, plus route-relation member ways tagged construction/disused
 // (existing track under works; see import-osm.ts).
