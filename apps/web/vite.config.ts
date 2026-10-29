@@ -68,6 +68,10 @@ function analytics(token: string | undefined): Plugin {
 }
 
 // https://vitejs.dev/config/
+// The site's own URL (canonical links, share previews in index.html's %VITE_SITE_URL%): another
+// deployment sets VITE_SITE_URL in its build environment.
+process.env.VITE_SITE_URL ??= "https://www.transitopia.org";
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   return {

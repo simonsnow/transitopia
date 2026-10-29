@@ -3,6 +3,7 @@ name: Deploy Server
 # The server (apps/server) on the FullHost VM (deployment/README.md#automatic-deploys): build the image, push it to GHCR,
 # then on the VM check out the same commit (for infra/ files) and restart with the new image.
 # Migrations run when the server starts. Deploys from `prod`, like the site. The VM step is skipped until the DEPLOY_* secrets exist (deployment/api-server-setup.md, step 12).
+# A copy of Transitopia sets its own (deployment/self-hosting.md); the image goes to its owner's GHCR.
 
 on:
   push:
@@ -58,6 +59,9 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          # Compose files on the VM: a repository variable, for a copy behind a Cloudflare Tunnel
+          # ("-f infra/compose.yml -f infra/compose.tunnel.yml", deployment/self-hosting.md).
+          COMPOSE_ARGS: ${{ vars.DEPLOY_COMPOSE_ARGS || '-f infra/compose.yml' }}
         if: env.DEPLOY_HOST != ''
         run: |
           mkdir -p ~/.ssh
@@ -65,5 +69,5 @@ jobs:
           echo "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" \
             "cd /opt/transitopia && git fetch -q origin prod && git checkout -q --detach origin/prod \
-             && docker compose -f infra/compose.yml pull server \
-             && docker compose -f infra/compose.yml up -d"
+             && docker compose $COMPOSE_ARGS pull server \
+             && docker compose $COMPOSE_ARGS up -d"

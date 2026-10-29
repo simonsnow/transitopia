@@ -1,0 +1,13 @@
+# For a VM reached through a Cloudflare Tunnel (deployment/self-hosting.md) rather than Caddy behind
+# Cloudflare's proxy: the tunnel's cloudflared, on the VM, forwards the API hostname to the server on
+# localhost, so there's no Caddy, no certificate and no open port. Over infra/compose.yml:
+#
+#   docker compose -f infra/compose.yml -f infra/compose.tunnel.yml up -d
+services:
+  server:
+    # Only on the VM's loopback, for cloudflared (SERVER_PORT if 8787 is taken by something else).
+    ports:
+      - "127.0.0.1:${SERVER_PORT:-8787}:8787"
+  caddy:
+    # Not started: the tunnel terminates TLS.
+    profiles: ["caddy"]

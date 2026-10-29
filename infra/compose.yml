@@ -41,8 +41,9 @@ services:
         condition: service_healthy
     # Measured 2026-09-30 (deployment/README.md, "Sizing"): ~0.7 GB as leader with live dispatch;
     # jobs run one at a time and add at most ~0.8 GB (statistics for a day of every route) or
-    # ~0.5 GB (data build step, a child process). The limit leaves room for more history and dates.
-    mem_limit: 3g
+    # ~0.5 GB (data build step, a child process). The limit leaves room for more history and dates;
+    # SERVER_MEM_LIMIT lowers it on a VM shared with other services.
+    mem_limit: ${SERVER_MEM_LIMIT:-3g}
 
   caddy:
     image: caddy:2

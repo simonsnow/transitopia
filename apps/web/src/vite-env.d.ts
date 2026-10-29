@@ -7,4 +7,6 @@ interface ImportMetaEnv {
   readonly VITE_TRANSIT_OVERVIEW_TILES_CDN?: string;
   readonly VITE_TRANSIT_DATA?: string;
   readonly VITE_TRANSIT_API?: string;
+  /** The site's own URL, for canonical links and share previews (default https://www.transitopia.org). */
+  readonly VITE_SITE_URL?: string;
 }

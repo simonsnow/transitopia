@@ -41,5 +41,10 @@ export const transitOverviewTiles: string =
     `${env.VITE_TRANSIT_OVERVIEW_TILES_CDN}${OVERVIEW_TILES_NAME}.json`
   : `pmtiles://${absolute(`/dev-data/tiles/${OVERVIEW_TILES_NAME}.pmtiles`)}`;
 
-/** The production site, for canonical URLs: preview builds and local runs point search engines there too. */
-export const siteUrl = "https://www.transitopia.org";
+/**
+ * The production site, for canonical URLs: preview builds and local runs point search engines there
+ * too. VITE_SITE_URL for another deployment (vite.config.ts sets the default).
+ */
+export const siteUrl = (
+  env.VITE_SITE_URL ?? "https://www.transitopia.org"
+).replace(/\/$/, "");

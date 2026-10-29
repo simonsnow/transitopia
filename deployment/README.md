@@ -1,6 +1,6 @@
 ## Deployment Notes
 
-How Transitopia is hosted, deployed and operated. The system's design is in [docs/DESIGN.md](../docs/DESIGN.md).
+How Transitopia is hosted, deployed and operated. The system's design is in [docs/DESIGN.md](../docs/DESIGN.md). To run a copy on your own domain, Cloudflare account and VM (behind a Cloudflare Tunnel or not), see [self-hosting.md](self-hosting.md).
 
 ### Hosting
 
