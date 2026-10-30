@@ -25,6 +25,7 @@ import {
 import { join } from "node:path";
 import { archivedFeeds } from "@transitopia/data/gtfs-day.ts";
 import { OVERPASS_ENDPOINTS } from "@transitopia/data/overpass.ts";
+import { defaultModel } from "@transitopia/transit-core/plan/routes.ts";
 import { readCsv } from "@transitopia/data/gtfs-zip.ts";
 import {
   feedPaths,
@@ -60,6 +61,15 @@ const SERVICE_NEAR_STOP_M = 150;
 const STOPS_MARGIN_DEG = 0.01;
 
 type Bbox = [number, number, number, number];
+
+/** Whether the feed's newest archived GTFS has a bus route (as plan/routes.ts models route types). */
+async function hasBuses(feed: string): Promise<boolean> {
+  const [newest] = await archivedFeeds(feed);
+  if (!newest) return false;
+  for await (const row of readCsv(newest.path, "routes.txt"))
+    if (defaultModel(row.route_type)?.mode === "bus") return true;
+  return false;
+}
 
 /** The bbox of the feed's stops in its newest archived GTFS, with a margin; undefined without one. */
 async function stopsBbox(feed: string): Promise<Bbox | undefined> {
@@ -161,6 +171,7 @@ async function fresh(feed: string): Promise<boolean> {
 }
 
 const regions = await readRegions();
+let failed = 0;
 for (const feed of await readFeeds()) {
   if (only && feed.id !== only) continue;
   if (await fresh(feed.id)) {
@@ -169,6 +180,12 @@ for (const feed of await readFeeds()) {
   }
   const shown = regions.filter((r) => r.feeds.includes(feed.id));
   if (!shown.length) continue;
+  // Roads are for matching bus shapes: a feed without buses (ferries) needs none, and its area can
+  // be huge (BC Ferries' runs to Haida Gwaii).
+  if (!(await hasBuses(feed.id))) {
+    log(`${feed.id}: no bus routes, no roads needed`);
+    continue;
+  }
   const stops = await stopsBbox(feed.id);
   const boxes = [...shown.map((r) => r.bbox), ...(stops ? [stops] : [])];
   const bbox: Bbox = [
@@ -177,5 +194,10 @@ for (const feed of await readFeeds()) {
     Math.max(...boxes.map((b) => b[2])),
     Math.max(...boxes.map((b) => b[3])),
   ];
-  await fetchFeed(feed.id, bbox);
+  // One feed failing (an Overpass instance timing out on a large area) doesn't stop the others.
+  await fetchFeed(feed.id, bbox).catch((e: unknown) => {
+    failed++;
+    log(`✖ ${feed.id}: ${e instanceof Error ? e.message : String(e)}`);
+  });
 }
+if (failed) process.exit(1);
