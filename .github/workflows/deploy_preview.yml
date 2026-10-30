@@ -36,13 +36,20 @@ jobs:
             exit 1
           fi
 
+          source_commit="$(git rev-parse HEAD)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty \
+            -m "Preview deploy: ${SOURCE_REF} (${source_commit:0:7})"
+          preview_commit="$(git rev-parse HEAD)"
+
           remote_preview="$(git ls-remote --heads origin refs/heads/preview)"
           expected="${remote_preview%%$'\t'*}"
           git push --force-with-lease="refs/heads/preview:$expected" \
             origin HEAD:refs/heads/preview
 
           {
-            echo "Updated \`preview\` to \`$(git rev-parse --short HEAD)\` from \`$SOURCE_REF\`."
+            echo "Updated \`preview\` to \`${preview_commit:0:7}\` (empty deployment commit) based on \`${source_commit:0:7}\` from \`$SOURCE_REF\`."
             echo
             echo "Cloudflare Pages preview: https://preview.transitopia.pages.dev"
           } >> "$GITHUB_STEP_SUMMARY"
