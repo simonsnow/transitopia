@@ -51,5 +51,5 @@ jobs:
           {
             echo "Updated \`preview\` to \`${preview_commit:0:7}\` (empty deployment commit) based on \`${source_commit:0:7}\` from \`$SOURCE_REF\`."
             echo
-            echo "Cloudflare Pages preview: https://preview.transitopia.pages.dev"
+            echo "Cloudflare Pages preview deployment URL: \`https://<hash>.transitopia.pages.dev\` (see Cloudflare deployment details for the generated hash)."
           } >> "$GITHUB_STEP_SUMMARY"
