@@ -2121,11 +2121,11 @@ export class TransitEngine {
   }
 
   /**
-   * Routes in their colour on the map: their own (`PlanRoute.brand`, while `showBrandColors` is on), or
-   * the frequency band of the map's window ("now" or "day"), as their corridors show it, in the
-   * current theme (packages/transit-map/README.md#bus-corridors): vehicles, and with brand colours
-   * off, lines too (`setRouteColors`). Re-set when the feed, the theme, the choice, the window or the
-   * frequency layer's rates change; returns whether they did.
+   * Routes in their colour on the map: branded routes keep their own colour while `showBrandColors`
+   * is on; other routes use the frequency band of the map's window ("now" or "day"), as their
+   * corridors show it, in the current theme (packages/transit-map/README.md#bus-corridors). Lines
+   * without corridors use the same frequency colours. Re-set when the feed, theme, choice, window
+   * or frequency rates change; returns whether they did.
    */
   private syncRouteColors(): boolean {
     const pp = this.shownFeed;
@@ -2163,14 +2163,9 @@ export class TransitEngine {
     if (this.styleReady)
       setRouteColors(
         this.map,
-        this.showBrandColors ? undefined : colors,
-        this.showBrandColors ? undefined : (
-          Object.fromEntries(
-            Object.entries(colors).map(([k, c]) => [
-              k,
-              fadeColor(c, this.theme),
-            ]),
-          )
+        colors,
+        Object.fromEntries(
+          Object.entries(colors).map(([k, c]) => [k, fadeColor(c, this.theme)]),
         ),
       );
     return true;

@@ -361,6 +361,31 @@ describe("ServiceChanges", () => {
       { ...a, header: "UPDATE: v2", seen: [t0, t0 + 300_000] },
     ]);
   });
+
+  it("rekeys retained alert entities to the route key in the current plan", async () => {
+    dir = await mkdtemp(join(tmpdir(), "rt-changes-"));
+    const date = serviceDate("20260929");
+    const old = new ServiceChanges(dir, true);
+    await old.updateAlerts(
+      [
+        {
+          id: "a1",
+          entities: [{ routeKey: "97" }],
+          stopIds: [],
+          periods: [],
+          header: "Okanagan",
+          description: "",
+        },
+      ],
+      Date.UTC(2026, 8, 29, 15, 14),
+    );
+    await old.flushed();
+
+    const reloaded = new ServiceChanges(dir, false);
+    reloaded.setRouteKeyAliases(new Map([["97", "97@kelowna"]]));
+    const { body } = await reloaded.versioned(date);
+    expect(JSON.parse(body).alerts[0].entities[0].routeKey).toBe("97@kelowna");
+  });
 });
 
 describe("route alerts", () => {

@@ -25,6 +25,7 @@ import type {
   PreparedTrip,
   ScheduleCorrections,
 } from "../schedule/engine.ts";
+import { sameStation, shiftAt } from "../schedule/engine.ts";
 import type { PlanPattern } from "../plan/types.ts";
 import { serviceDayStart, type ServiceDate } from "../time.ts";
 
@@ -56,6 +57,8 @@ export interface AisMatchConfig {
   minTurnaroundS: number;
   /** Carry lateness into at most this many following trips. */
   maxCarryTrips: number;
+  /** Keep an incoming trip at its dock this long after the latest docked AIS fix (s). */
+  dockedGraceS: number;
   /** A day's berth pair needs at least this many docked fixes, more than at all other pairs together. */
   pairMinFixes: number;
 }
@@ -79,6 +82,7 @@ interface Match {
   shift: number;
   /** Only a bound (docked fixes consistent with the timetable don't anchor). */
   anchor: boolean;
+  endpoint?: "origin" | "destination" | undefined;
 }
 
 /**
@@ -96,11 +100,15 @@ export function aisCorrections(
   const trips = [...pp.servicesOn(serviceDate)]
     .flatMap((s) => pp.tripsByService.get(s) ?? [])
     .filter((t) => routes.includes(t.route.key));
+  const handoffCorrections = new Map<string, { tripId: string; at: number }>();
+  const dockedUntil = new Map<string, number>();
   const out: AisDay = {
     corrections: {
       trips: new Map(),
       cancelled: new Set(),
       consists: new Map(),
+      handoffs: handoffCorrections,
+      dockedUntil,
     },
     vessels: new Map(),
     matched: 0,
@@ -127,12 +135,19 @@ export function aisCorrections(
 
   const perTrip = new Map<
     PreparedTrip,
-    { anchors: Map<number, number>; observed: { t: number; source: string }[] }
+    {
+      anchors: Map<number, number>;
+      observed: { t: number; source: string }[];
+      dockedUntil?: number | undefined;
+    }
   >();
   const votes = new Map<string, Map<string, { name?: string; n: number }>>();
+  const lastTripByVessel = new Map<string, PreparedTrip>();
+  const handoffs = new Map<PreparedTrip, PreparedTrip>();
   const sorted = [...fixes].sort((a, b) => a.ts - b.ts);
   for (const f of sorted) {
     const s = (f.ts - dayStart) / 1000;
+    const stationary = f.sog !== undefined && f.sog <= cfg.stationaryKn;
     const m = matchFix(pp, trips, f, s, cfg, shapeOf);
     if (!m) {
       out.unmatched++;
@@ -143,6 +158,40 @@ export function aisCorrections(
     if (!e) perTrip.set(m.trip, (e = { anchors: new Map(), observed: [] }));
     if (m.anchor) e.anchors.set(m.sched, m.shift);
     e.observed.push({ t: s, source: SOURCE });
+    if (m.endpoint === "destination")
+      e.dockedUntil = Math.max(
+        e.dockedUntil ?? -Infinity,
+        s + cfg.dockedGraceS,
+      );
+    const previous = lastTripByVessel.get(f.mmsi);
+    const sharesTerminal =
+      previous
+      && sameStation(
+        pp.plan.stops[
+          previous.pattern.stops[previous.pattern.stops.length - 1]!
+        ]!,
+        pp.plan.stops[m.trip.pattern.stops[0]!]!,
+      );
+    if (previous && m.endpoint === "origin" && stationary && sharesTerminal) {
+      const previousMatch = perTrip.get(previous);
+      if (previousMatch)
+        previousMatch.dockedUntil = Math.max(
+          previousMatch.dockedUntil ?? -Infinity,
+          s + cfg.dockedGraceS,
+        );
+    }
+    if (
+      previous
+      && previous !== m.trip
+      && previous.next !== m.trip
+      && m.anchor
+      && f.sog !== undefined
+      && f.sog > cfg.stationaryKn
+      && sharesTerminal
+    )
+      handoffs.set(previous, m.trip);
+    if (!stationary || m.endpoint === "destination")
+      lastTripByVessel.set(f.mmsi, m.trip);
     let v = votes.get(m.trip.vehicleId);
     if (!v) votes.set(m.trip.vehicleId, (v = new Map()));
     const c = v.get(f.mmsi) ?? { n: 0 };
@@ -160,6 +209,21 @@ export function aisCorrections(
       .sort((a, b) => a.sched - b.sched);
     if (!anchors.length) anchors.push({ sched: trip.trip.start, shift: 0 });
     corr.trips.set(trip.trip.id, { anchors, observed: e.observed });
+    if (e.dockedUntil !== undefined)
+      dockedUntil.set(trip.trip.id, e.dockedUntil);
+  }
+  for (const [previous, next] of handoffs) {
+    const previousArr = previous.arr[previous.arr.length - 1]!;
+    const nextStart = next.trip.start;
+    const previousShift = shiftAt(
+      corr.trips.get(previous.trip.id)?.anchors,
+      previousArr,
+    );
+    const nextShift = shiftAt(corr.trips.get(next.trip.id)?.anchors, nextStart);
+    handoffCorrections.set(previous.trip.id, {
+      tripId: next.trip.id,
+      at: Math.max(previousArr + previousShift, nextStart + nextShift),
+    });
   }
   // Carry each observed trip's final lateness into the vessel's next unobserved trips.
   for (const [trip, e] of perTrip) {
@@ -255,8 +319,20 @@ function matchFix(
       // Docked at the origin berth: late if still there after departure time.
       m =
         s > dep ?
-          { trip, sched: dep, shift: s - dep, anchor: true }
-        : { trip, sched: dep, shift: 0, anchor: false };
+          {
+            trip,
+            sched: dep,
+            shift: s - dep,
+            anchor: true,
+            endpoint: "origin",
+          }
+        : {
+            trip,
+            sched: dep,
+            shift: 0,
+            anchor: false,
+            endpoint: "origin",
+          };
     } else if (
       stationary
       && distM(p, coords[coords.length - 1]!) <= cfg.dockRadiusM
@@ -266,8 +342,20 @@ function matchFix(
       if (trip.next && s > trip.next.dep[0]!) continue;
       m =
         s < arr ?
-          { trip, sched: arr, shift: s - arr, anchor: true }
-        : { trip, sched: arr, shift: 0, anchor: false };
+          {
+            trip,
+            sched: arr,
+            shift: s - arr,
+            anchor: true,
+            endpoint: "destination",
+          }
+        : {
+            trip,
+            sched: arr,
+            shift: 0,
+            anchor: false,
+            endpoint: "destination",
+          };
     } else if (!stationary || f.sog === undefined) {
       const pr = projectOnto(coords, cum, p, 0, cfg.maxOffsetM);
       if (pr.offset > cfg.maxOffsetM || pr.along <= 0 || pr.along >= total)

@@ -336,7 +336,7 @@ function retime(
   }
 }
 
-function sameStation(a: PlanStop, b: PlanStop): boolean {
+export function sameStation(a: PlanStop, b: PlanStop): boolean {
   return (
     a.id === b.id
     || (a.parent !== undefined && a.parent === b.parent)
@@ -396,6 +396,10 @@ export interface ScheduleCorrections {
   >;
   cancelled: Set<string>;
   consists: Map<string, NonNullable<VehicleState["consist"]>>;
+  /** AIS-proven route changes: keep the incoming trip at its destination until the next trip departs. */
+  handoffs?: Map<string, { tripId: string; at: number }>;
+  /** A docked AIS fix keeps its incoming trip visible briefly while the next sailing is unknown. */
+  dockedUntil?: Map<string, number>;
   /**
    * Pattern id → shape to draw it along instead of its own (a ferry day using another berth pair,
    * ServicePlan.ferry). Timing is unchanged: distance along the pattern is scaled to the shape.
@@ -525,12 +529,16 @@ export function scheduledVehicles(
           shiftAt(corr.trips.get(t.next.trip.id)?.anchors, t.next.trip.start)
         : 0;
       const until =
-        t.next ?
-          Math.max(lastArr + endShift, t.next.trip.start + nextShift)
-        : Math.max(lastArr + endShift, t.visibleUntil + endShift);
+        corr.handoffs?.get(t.trip.id)?.at
+        ?? Math.max(
+          lastArr + endShift,
+          t.next ? t.next.trip.start + nextShift : t.visibleUntil + endShift,
+          corr.dockedUntil?.get(t.trip.id) ?? -Infinity,
+        );
       if (
         q.sec < t.trip.start + startShift
         || q.sec > until
+        || (corr.handoffs?.has(t.trip.id) && q.sec >= until)
         || (t.next
           && q.sec === until
           && until === t.next.trip.start + nextShift)

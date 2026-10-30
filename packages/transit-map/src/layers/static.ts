@@ -129,9 +129,8 @@ const stopOnFocus: ExpressionSpecification = [
   ],
 ];
 /**
- * Map global states while every route is coloured by frequency (the viewer turned brand colours
- * off, `setRouteColors`): per route key, the colour its lines are drawn in, and the colour off the
- * focused route; null while routes are drawn in their own colours.
+ * Map global states overriding route lines with frequency colours, and their faded colours off the
+ * focused route. Routes without an override keep their own colour.
  */
 const ROUTE_COLORS = "routeColors";
 const ROUTE_FADED = "routeFaded";
@@ -149,16 +148,13 @@ const colorOverride = (
   ],
   own,
 ];
-/** A line's colour: its route's own (`color`), or its frequency colour while routes are coloured by frequency. */
+/** A line's frequency override when present, otherwise its own (`color`). */
 export const routeLineColor = (
   prop = "route",
   own: ExpressionSpecification = ["get", "color"],
 ): ExpressionSpecification => colorOverride(ROUTE_COLORS, prop, own);
 
-/**
- * Colour every route by frequency (`colors`: per route key, its colour; `faded`, off the focused
- * route), or with none, in their own colours.
- */
+/** Override route line colours with frequency colours, leaving routes absent from `colors` as-is. */
 export function setRouteColors(
   map: MlMap,
   colors: Record<string, string> | undefined,

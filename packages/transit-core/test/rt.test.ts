@@ -5,6 +5,7 @@ import {
   decodeSnapshot,
   encodeSnapshot,
   extendCoverage,
+  routeKeyAliases,
   trackedOnly,
   untrackedRouteKey,
   type RtSnapshot,
@@ -810,6 +811,31 @@ describe("trackedOnly", () => {
     expect(
       trackedOnly(s, new Map([["6627", "25"]])).vehicles.map((v) => v.routeKey),
     ).toEqual(["99", "25"]);
+  });
+
+  it("rekeys retained tracked buses when their GTFS route keeps its id", () => {
+    const s = snap(0, [[-123.1, 49.2]]);
+    s.vehicles[0]!.routeKey = "97";
+    expect(
+      trackedOnly(s, undefined, new Map([["97", "97@kelowna"]])).vehicles[0]
+        ?.routeKey,
+    ).toBe("97@kelowna");
+  });
+
+  it("only aliases an old key when its GTFS route has one unambiguous current key", () => {
+    const aliases = routeKeyAliases(
+      [
+        { key: "97", gtfsRouteId: "97-KEL" },
+        { key: "1", gtfsRouteId: "kel-1" },
+        { key: "1", gtfsRouteId: "north-1" },
+      ],
+      [
+        { key: "97@kelowna", gtfsRouteId: "97-KEL" },
+        { key: "1@kelowna", gtfsRouteId: "kel-1" },
+        { key: "1@north", gtfsRouteId: "north-1" },
+      ],
+    );
+    expect(aliases).toEqual(new Map([["97", "97@kelowna"]]));
   });
 });
 

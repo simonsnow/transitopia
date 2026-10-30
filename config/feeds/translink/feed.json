@@ -78,6 +78,8 @@
       "$minTurnaroundS": "Timetabled layovers are 2–4 min; a late vessel catches up by shortening them to this.",
       "minTurnaroundS": 90,
       "maxCarryTrips": 3,
+      "$dockedGraceS": "Keep the incoming route visible while the next SeaBus sailing is not yet matched; 5 min covers the observed AIS gaps (config/regions/metro-vancouver/OPEN-QUESTIONS.md #27).",
+      "dockedGraceS": 300,
       "$pairMinFixes": "The day's berth pair is the one with at least this many docked fixes, more than at every other pair together; until then, defaultPair.",
       "pairMinFixes": 2
     },

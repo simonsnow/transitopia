@@ -14,3 +14,7 @@ Each has a **current assumption** that ships as a value in the defaults, an oper
    - *Guess:* 75 m by 18 m, cruising near 18 km/h (`config/operators/bc-mott/operator.json`).
 6. **Why are stops on West Kootenay's route 2 (Fairview, Nelson) far from its shape?** `build-schedule` finds stops on Kokanee Ave, Davies St and Fell St 190–410 m from shapes 37032 and 36914, among about 60 such warnings in the system (export of 2026-10-28).
    - *Guess:* the shapes skip part of the loops the trips serve. Compare with imagery and recorded positions; until then, buses there may be drawn off the line.
+7. **How long is the published Boundary Route 1 schedule valid?** The timetable lists Friday trips but no effective end date (https://www.bctransit.com/boundary/schedules-and-maps/route-1-greenwood-grand-forks/).
+   - *Assumption:* transcribe the published schedule from 2026-10-30 through 2027-12-31, and revisit when BC Transit publishes a change (`config/feeds/bc-transit-boundary/gtfs/feed_info.txt`).
+8. **Where exactly do Boundary Route 1 passengers board in Grand Forks and Greenwood?** The timetable names the communities but not a verified stop coordinate.
+   - *Guess:* use approximate community-centre endpoints on the OSM road shape; keep the route line-only until exact boarding locations are confirmed (`config/feeds/bc-transit-boundary/gtfs/stops.txt`).

@@ -1,22 +1,38 @@
 {
-  "$comment": "BC Transit's Kelowna Regional Transit System, published by BC Transit through Consat (tmix.se) as operator 47 (https://www.bctransit.com/open-data/, checked 2026-10-14). Every route is drawn; overrides and exclusions: routes.json. Regions showing it: central-okanagan. Terms: https://www.bctransit.com/open-data/terms-of-use/ (identify BC Transit as the source; no use of its marks).",
+  "$comment": "BC Transit's connected South Okanagan-Similkameen (15), Kelowna (47), and North Okanagan/Shuswap (14) systems, merged so their transfers show together. Consat operator ids and current coverage checked 2026-10-28. The feed id remains bc-transit-kelowna for existing data URLs. Every route is drawn; overrides: routes.json. Region: central-okanagan, displayed as Okanagan. Terms: https://www.bctransit.com/open-data/terms-of-use/ (identify BC Transit as the source; no use of its marks).",
   "id": "bc-transit-kelowna",
-  "name": "BC Transit (Kelowna)",
+  "name": "BC Transit (Okanagan and Shuswap)",
   "operator": "bc-transit",
   "timezone": "America/Vancouver",
   "dataset": "bc-transit-gtfs",
   "static": {
-    "$comment": "Regenerated daily with a new feed_version (e.g. \"202610140/20261013 21:00:00/20261014 04:00:00\") even when the timetable is unchanged, so fetch-gtfs archives a version only when its files differ from the newest archived one. No dated history. Uses calendar_dates.txt only (no calendar.txt), shape_dist_traveled in metres. How often the timetable really changes: config/regions/central-okanagan/OPEN-QUESTIONS.md #1.",
-    "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=47"
+    "$comment": "Consat exports one system per request, so fetch-gtfs merges these parts, each as its own agency (packages/data/src/gtfs-merge.ts). Consat ids are global across systems. The merged timetable covers only dates every part covers; on 2026-10-28 Kelowna ended 2026-12-19, South Okanagan 2027-09-06, and North Okanagan/Shuswap 2027-12-31. Daily exports roll off past dates (config/regions/central-okanagan/OPEN-QUESTIONS.md #1).",
+    "parts": [
+      {
+        "agency": "kelowna",
+        "name": "Kelowna",
+        "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=47"
+      },
+      {
+        "agency": "south-okanagan-similkameen",
+        "name": "South Okanagan-Similkameen",
+        "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=15"
+      },
+      {
+        "agency": "north-okanagan-shuswap",
+        "name": "North Okanagan and Shuswap",
+        "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=14"
+      }
+    ]
   },
   "realtime": {
-    "$comment": "No API key and no stated request limit. Every bus in the system, with its trip; fixes were p50 ~8 s old when fetched (2026-10-14). Polled within a modest budget all the same: config/regions/central-okanagan/OPEN-QUESTIONS.md #2.",
+    "$comment": "One request covers all three systems; endpoints accept multiple operatorIds. No API key or stated request limit. Polled within a modest budget: config/regions/central-okanagan/OPEN-QUESTIONS.md #2.",
     "urls": {
-      "positions": "https://bct.tmix.se/gtfs-realtime/vehicleupdates.pb?operatorIds=47",
-      "tripUpdates": "https://bct.tmix.se/gtfs-realtime/tripupdates.pb?operatorIds=47",
-      "alerts": "https://bct.tmix.se/gtfs-realtime/alerts.pb?operatorIds=47"
+      "positions": "https://bct.tmix.se/gtfs-realtime/vehicleupdates.pb?operatorIds=47,15,14",
+      "tripUpdates": "https://bct.tmix.se/gtfs-realtime/tripupdates.pb?operatorIds=47,15,14",
+      "alerts": "https://bct.tmix.se/gtfs-realtime/alerts.pb?operatorIds=47,15,14"
     },
-    "$poll": "Guess, to be polite to a provider that states no limit: positions every 30 s while buses run (05:00-24:00), every 60 s overnight; trip updates (~0.25-0.85 MB each) every 2 minutes, 5 overnight; alerts every 5 minutes, 15 overnight. About 3,460 requests a day; dailyCap is a safety net. OPEN-QUESTIONS #2.",
+    "$poll": "Guess, to be polite to a provider that states no limit: positions every 30 s while buses run (05:00-24:00), every 60 s overnight; trip updates every 2 minutes, 5 overnight; alerts every 5 minutes, 15 overnight. About 3,460 requests a day across all three systems; dailyCap is a safety net. OPEN-QUESTIONS #2.",
     "poll": {
       "dailyCap": 4000,
       "weekday": [
@@ -38,9 +54,9 @@
     "extrapolateSlackS": 45
   },
   "display": {
-    "$tripId": "Trip ids are three internal ids, <journey>:<variant>:<block> (e.g. 11898518:14545024:14591755); the journey alone is unique on any date (feed of 2026-10-14: a journey appears in at most two trips, never running the same day).",
+    "$tripId": "Consat trip ids begin with the journey id, as in BC Transit's other feeds.",
     "tripId": "^([^:]+):",
-    "$feedVersion": "Versions look like \"202610140/20261013 21:00:00/20261014 04:00:00\": the export date and a sequence number, then the export window.",
+    "$feedVersion": "Versions begin with an export date and sequence number, before slash-separated export times.",
     "feedVersion": "^([^/ ]+)"
   }
 }
