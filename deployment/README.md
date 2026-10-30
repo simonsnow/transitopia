@@ -25,6 +25,20 @@ Work happens on feature branches merged into `main`. Production deploys from `pr
 Pages builds the site from `prod`, and `.github/workflows/deploy_server.yml` deploys the server.
 Scheduled workflows (the basemap and cycling builds) run from `main`, the default branch.
 
+#### Preview site
+
+The shared preview site is `https://preview.transitopia-web.pages.dev`. To update it before a
+production deploy, open **Actions → Deploy Preview → Run workflow**, enter the source branch or
+commit, and run it. The workflow updates the `preview` branch; Cloudflare Pages builds that branch
+automatically. Each update replaces the previous preview, so it is one shared URL, not a separate
+preview per pull request. The workflow uses a guarded force update so a concurrent change to
+`preview` is not overwritten.
+
+In Cloudflare Pages, keep `prod` as the production branch and allow `preview` under preview branch
+controls. The preview build uses the same production data and API URLs as the site
+(`apps/web/.env.production`): it is suitable for testing site-code changes, but changes to feeds,
+generated transit data, or server code are not isolated or deployed by this workflow.
+
 The VM's checkout at `/opt/transitopia` stays detached at `origin/prod`. To update it by hand, do
 what the deploy workflow does, not `git pull`:
 
