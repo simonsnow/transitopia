@@ -27,7 +27,7 @@ Scheduled workflows (the basemap and cycling builds) run from `main`, the defaul
 
 #### Preview site
 
-The shared preview site is `https://preview.transitopia-web.pages.dev`. To update it before a
+The shared preview site is `https://preview.transitopia.pages.dev`. To update it before a
 production deploy, open **Actions → Deploy Preview → Run workflow**, enter the source branch or
 commit, and run it. The workflow updates the `preview` branch; Cloudflare Pages builds that branch
 automatically. Each update replaces the previous preview, so it is one shared URL, not a separate
@@ -62,7 +62,7 @@ separated. It keeps other websites from building maps on our tiles and using up 
 allowance. It doesn't stop non-browser clients. Entries may use `*` for one subdomain label, which
 is a Transitopia change to the upstream worker:
 
-    https://www.transitopia.org,https://transitopia.org,https://*.transitopia-web.pages.dev,http://localhost:5173
+    https://www.transitopia.org,https://transitopia.org,https://*.transitopia.pages.dev,http://localhost:5173
 
 `worker.js` isn't deployed by CI: after changing it, paste it into the worker in the Cloudflare
 dashboard (or deploy it with wrangler).
@@ -90,7 +90,7 @@ One-time setup (done):
 
 1. Create the R2 bucket `transitopia-data` and connect the custom domain `data.transitopia.org`.
 2. Add a CORS policy allowing `GET` and `HEAD` from `https://www.transitopia.org` (and
-   `https://transitopia.org`, `https://*.transitopia-web.pages.dev`, `http://localhost:5173`), with
+   `https://transitopia.org`, `https://*.transitopia.pages.dev`, `http://localhost:5173`), with
    the `Range` request header allowed and `ETag` exposed: the site reads each plan's tiles
    (`data/feeds/<feed>/lines/<hash>.pmtiles`) by range requests through the pmtiles protocol.
 3. Cache: the manifests (`data/feeds/*/manifest.json`), the places indexes (`data/feeds/*/places.json`) and `data/features/latest.json` should be short-lived (e.g. 5 minutes); everything else can be cached

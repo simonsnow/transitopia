@@ -44,5 +44,5 @@ jobs:
           {
             echo "Updated \`preview\` to \`$(git rev-parse --short HEAD)\` from \`$SOURCE_REF\`."
             echo
-            echo "Cloudflare Pages preview: https://preview.transitopia-web.pages.dev"
+            echo "Cloudflare Pages preview: https://preview.transitopia.pages.dev"
           } >> "$GITHUB_STEP_SUMMARY"

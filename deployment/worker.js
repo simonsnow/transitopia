@@ -1375,7 +1375,7 @@ var R2Source = class {
   }
 };
 // Transitopia change (not in the upstream Protomaps worker): ALLOWED_ORIGINS entries may use "*" for
-// one subdomain label, e.g. "https://*.transitopia-web.pages.dev" for Cloudflare Pages previews, and
+// one subdomain label, e.g. "https://*.transitopia.pages.dev" for Cloudflare Pages previews, and
 // may have spaces after the commas. A lone "*" still allows every origin.
 function originPattern(entry) {
   const escaped = entry.replace(/[.+?^${}()|[\]\\/]/g, "\\$&");
