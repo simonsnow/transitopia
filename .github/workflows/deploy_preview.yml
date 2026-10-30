@@ -1,0 +1,48 @@
+name: Deploy Preview
+run-name: Deploy ${{ inputs.source_ref }} to preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch or commit to publish to the shared preview
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy-preview
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Update preview branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - name: Point preview at the selected commit
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$SOURCE_REF" == "preview" ]]; then
+            echo "::error::Choose a source ref other than preview."
+            exit 1
+          fi
+
+          remote_preview="$(git ls-remote --heads origin refs/heads/preview)"
+          expected="${remote_preview%%$'\t'*}"
+          git push --force-with-lease="refs/heads/preview:$expected" \
+            origin HEAD:refs/heads/preview
+
+          {
+            echo "Updated \`preview\` to \`$(git rev-parse --short HEAD)\` from \`$SOURCE_REF\`."
+            echo
+            echo "Cloudflare Pages preview: https://preview.transitopia-web.pages.dev"
+          } >> "$GITHUB_STEP_SUMMARY"
