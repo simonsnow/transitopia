@@ -1,0 +1,13 @@
+{
+  "$comment": "Route 1 is a scheduled, booking-required service. Keep it as a line only: don't imply a vehicle runs without booking.",
+  "routes": [
+    {
+      "key": "1",
+      "label": "1 Greenwood - Grand Forks",
+      "match": {
+        "route_short_name": "1"
+      },
+      "vehicles": false
+    }
+  ]
+}

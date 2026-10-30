@@ -4,7 +4,7 @@ How Transitopia turns timetables, OpenStreetMap track and real-time data into th
 
 ## Overview
 
-The engine animates, on a to-scale vector map of Metro Vancouver (and BC Transit's bus routes on Vancouver Island, the Sunshine Coast and in Kelowna: [docs/DESIGN.md → Regions and feeds](../../docs/DESIGN.md#regions-and-feeds)):
+The engine animates, on a to-scale vector map of Metro Vancouver and BC Transit's bus routes across Vancouver Island, the Sunshine Coast, Fraser Valley, Okanagan and Shuswap, Merritt, Kamloops and the Kootenays: [docs/DESIGN.md → Regions and feeds](../../docs/DESIGN.md#regions-and-feeds):
 
 - **SkyTrain** (Expo, Millennium and Canada Lines): every train on the correct track, through switches, pocket tracks and turnbacks, and moving to and from the operations and maintenance centres (OMCs) and yards as trains enter and leave service. Positions are **inferred from the schedule**, refined by corrections and dispatched through a signalling simulation.
 - **SeaBus** and **West Coast Express**: from the schedule along simpler geometry. SeaBus is anchored by live AIS.
@@ -151,7 +151,7 @@ The site's route groups, its layers panel's switches, come from the timetable ra
 - **Trips by service day.** A service's trips still running towards midnight (arriving at their last stop after 22:15: the longest layover shown plus an hour of carried delay, `LATE_MARGIN_S`) are in its late file, with every SkyTrain trip (track-level playback needs a service's runs whole). Each file says until when its trips are shown (`TripFileRef.until`: 24:00 for the main file), so the day after loads only the late file (`tripFilesFor`).
 - **In the browser** (`PlanStore` in `packages/transit-map/src/plans.ts`): the core, shapes and the corridors' metadata, then the trip files of the services the shown date needs (requested with the core, so in parallel with its shapes), and of the day before its late files. A date's SkyTrain playback is built only while its trains can still be running and once its late files are in, since its movement file references every SkyTrain trip of its services. The map draws from the core and the plan's tiles as soon as the core is in; vehicles appear when their trips are. Changing the date loads the new services' files only. `pp.plan` stays the same object for a feed version, and each arrival of trip files makes a new prepared plan (`withServiceTrips`), so what's cached per prepared plan is worked out again, and positions stay a pure function of the plan (with the trips it needs), its overlays and t.
 
-On a 2026-10-20 (Tuesday) view, before vehicles show: core, shapes and the corridors' metadata (430 KB brotli, against 460 KB with the overview corridors' geometry before) and the tiles in view, then the day's trips (about 250 KB). Parsing and preparing them took 23 ms and 63 ms on an M-series Mac (the whole 24 MB plan: 210 ms). Greater Victoria's whole plan is about 105 KB and Central Okanagan's 20 KB.
+On a 2026-10-20 (Tuesday) view, before vehicles show: core, shapes and the corridors' metadata (430 KB brotli, against 460 KB with the overview corridors' geometry before) and the tiles in view, then the day's trips (about 250 KB). Parsing and preparing them took 23 ms and 63 ms on an M-series Mac (the whole 24 MB plan: 210 ms). Greater Victoria's whole plan is about 105 KB; the three-system Okanagan plan and its parts were about 0.8 MB in the 2026-10-28 feed.
 
 ### Plan tiles
 

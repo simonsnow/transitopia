@@ -1,4 +1,4 @@
-# Open questions: Central Okanagan
+# Open questions: Okanagan
 
 Each has a **current assumption** that ships as a value in the defaults (`config/defaults/`), BC Transit's `config/operators/bc-transit/operator.json` or the feed's `feed.json`, whose comment cites the question by number ("OPEN-QUESTIONS #N"). Numbers are stable.
 
@@ -12,3 +12,5 @@ Each has a **current assumption** that ships as a value in the defaults (`config
    - *Assumption:* 12 m long, 2.6 m wide, 90 km/h top speed (`config/defaults/kinematics.json`).
 5. **How does BC Transit publish detours?** Alerts seen so far name stops (closures) with `NO_SERVICE`, and some routes.
    - *Assumption:* alerts are read as TransLink's are (`packages/transit-core/src/rt/changes.ts`).
+6. **Are the Okanagan and Shuswap systems complete and connected in the merged feed?** The 2026-10-28 exports share stops and the South Okanagan feed includes a Kelowna exchange.
+   - *Assumption:* merge Kelowna (47), South Okanagan-Similkameen (15), and North Okanagan/Shuswap (14), keeping the dates all three cover; verify transfers and route coverage after each timetable update (`config/feeds/bc-transit-kelowna/feed.json`).

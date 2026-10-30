@@ -1,10 +1,10 @@
 # Kootenays
 
-A bus region with ferries: BC Transit's [West Kootenay](https://www.bctransit.com/west-kootenay/), [Creston Valley](https://www.bctransit.com/creston-valley/) and [Revelstoke](https://www.bctransit.com/revelstoke/) systems as one merged feed, `bc-transit-kootenays` ([config/feeds/bc-transit-kootenays/](../../feeds/bc-transit-kootenays/)), each system an agency of its own ([docs/DESIGN.md → Regions and feeds](../../../docs/DESIGN.md#regions-and-feeds)), with the Kootenay Lake and cable ferries from `bc-inland-ferries` drawn over them ([docs/DESIGN.md → Overlay feeds](../../../docs/DESIGN.md#overlay-feeds)).
+A bus region with ferries: BC Transit's [West Kootenay](https://www.bctransit.com/west-kootenay/), [Creston Valley](https://www.bctransit.com/creston-valley/) and [Revelstoke](https://www.bctransit.com/revelstoke/) systems as one merged feed, `bc-transit-kootenays` ([config/feeds/bc-transit-kootenays/](../../feeds/bc-transit-kootenays/)), each system an agency of its own ([docs/DESIGN.md → Regions and feeds](../../../docs/DESIGN.md#regions-and-feeds)). The Kootenay Lake and cable ferries from `bc-inland-ferries`, and Boundary Regional Transit Route 1 from `bc-transit-boundary`, are overlays ([docs/DESIGN.md → Overlay feeds](../../../docs/DESIGN.md#overlay-feeds)).
 
 | Path | What |
 |---|---|
-| `region.json` | bbox (Rossland to Revelstoke, Kaslo and Creston), time zone, the first view of `/transit` (Nelson), time zone data checks, and its feeds |
+| `region.json` | bbox (Grand Forks, Rossland to Revelstoke, Kaslo and Creston), time zone, the first view of `/transit` (Nelson), time zone data checks, and its feeds |
 | Settings | None of its own yet: vehicles and real-time use come from [config/defaults/](../../defaults/), BC Transit's [operator.json](../../operators/bc-transit/operator.json) and, for the ferry, [BC Inland Ferries'](../../operators/bc-mott/operator.json), each with a source or "guess" and a cross-reference to [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) |
 
 ## Systems
@@ -18,6 +18,12 @@ Counts are from the exports of 2026-10-28.
 | `revelstoke` | Revelstoke | 36 | 3 | 89 | Revelstoke, Big Eddy and the mountain resort shuttle |
 
 Every route is drawn in its GTFS colour. Buses are live from BC Transit's GTFS-realtime where the server polls it (one request for every system), estimated from the timetable otherwise.
+
+## Boundary Route 1
+
+BC Transit publishes a Friday Route 1 schedule between Grand Forks and Greenwood, with advance booking required by 2 p.m. the previous day. `bc-transit-boundary` transcribes the four scheduled trips and draws the road-following line only; it does not imply a bus runs without a booking, and it does not include on-request Route 2 or Health Connections Route 70. The schedule has no published end date, so the transcription's validity range is an assumption ([OPEN-QUESTIONS #7](OPEN-QUESTIONS.md#7-how-long-is-the-published-boundary-route-1-schedule-valid)).
+
+The shape follows OSM roads, and the timetable's community labels are mapped to approximate endpoint positions. See [OPEN-QUESTIONS #8](OPEN-QUESTIONS.md#8-where-exactly-do-boundary-route-1-passengers-board-in-grand-forks-and-greenwood) before treating these as exact stop locations.
 
 ## Kootenay Lake ferry
 

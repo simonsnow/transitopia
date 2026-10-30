@@ -1,0 +1,18 @@
+{
+  "$comment": "Schedule-only copy of BC Transit's operator 13 feed, used as an overlay in Metro Vancouver where the Fraser Valley routes reach Lougheed. The live feed is bc-transit-fraser-valley in the Fraser Valley region; overlays cannot carry bus real time (docs/DESIGN.md#overlay-feeds).",
+  "id": "bc-transit-fraser-valley-overlay",
+  "name": "BC Transit (Fraser Valley overlay)",
+  "operator": "bc-transit",
+  "timezone": "America/Vancouver",
+  "dataset": "bc-transit-gtfs",
+  "static": {
+    "$comment": "Same operator 13 export as the Fraser Valley primary feed. Kept separate because overlays are timetable-only.",
+    "url": "https://bct.tmix.se/Tmix.Cap.TdExport.WebApi/gtfs/?operatorIds=13"
+  },
+  "display": {
+    "$tripId": "Consat trip ids begin with the journey id.",
+    "tripId": "^([^:]+):",
+    "$feedVersion": "Versions begin with an export date and sequence number.",
+    "feedVersion": "^([^/ ]+)"
+  }
+}

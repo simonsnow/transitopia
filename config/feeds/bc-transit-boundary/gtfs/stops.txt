@@ -1,0 +1,3 @@
+stop_id,stop_name,stop_lat,stop_lon
+grand-forks,Grand Forks,49.032119,-118.441008
+greenwood,Greenwood,49.091000,-118.676165

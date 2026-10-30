@@ -1,0 +1,9 @@
+trip_id,arrival_time,departure_time,stop_id,stop_sequence,shape_dist_traveled
+gf-greenwood-am,08:30:00,08:30:00,grand-forks,1,0
+gf-greenwood-am,09:05:00,09:05:00,greenwood,2,40683.4
+greenwood-gf-am,09:05:00,09:05:00,greenwood,1,0
+greenwood-gf-am,10:00:00,10:00:00,grand-forks,2,40683.4
+gf-greenwood-pm,13:00:00,13:00:00,grand-forks,1,0
+gf-greenwood-pm,13:30:00,13:30:00,greenwood,2,40683.4
+greenwood-gf-pm,13:30:00,13:30:00,greenwood,1,0
+greenwood-gf-pm,14:15:00,14:15:00,grand-forks,2,40683.4

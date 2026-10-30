@@ -1,0 +1,16 @@
+{
+  "$comment": "Boundary Regional Transit Route 1, Greenwood–Grand Forks, transcribed from BC Transit's published schedule (https://www.bctransit.com/boundary/schedules-and-maps/route-1-greenwood-grand-forks/). It requires advance booking; only its scheduled line is shown, not the on-request service. The route endpoints are approximate community-centre positions (config/regions/kootenays/OPEN-QUESTIONS.md #8), and the shape follows OSM roads via OSRM. Shown as an overlay in Kootenays. BC Transit terms: https://www.bctransit.com/open-data/terms-of-use/.",
+  "id": "bc-transit-boundary",
+  "name": "BC Transit (Boundary Route 1)",
+  "operator": "bc-transit",
+  "timezone": "America/Vancouver",
+  "dataset": "bc-transit-gtfs",
+  "static": {
+    "$comment": "A small GTFS transcribed from the published Friday Route 1 timetable, which requires booking by 2 p.m. the previous day. The page has no timetable validity end date; service is assumed through 2027-12-31 (config/regions/kootenays/OPEN-QUESTIONS.md #7). Only Route 1 is included; Routes 2 and 70 (on-request/Health Connections) are not.",
+    "dir": "gtfs"
+  },
+  "display": {
+    "$feedVersion": "Our own version names the transcription date.",
+    "feedVersion": "^(.+)$"
+  }
+}

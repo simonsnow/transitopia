@@ -48,19 +48,64 @@ export const untrackedRouteKey = (gtfsRouteId: string | undefined): string =>
 export const isTracked = (v: Pick<RtVehicle, "routeKey">): boolean =>
   !v.routeKey.startsWith(UNTRACKED);
 
+export interface RouteKeyVersion {
+  key: string;
+  gtfsRouteId: string;
+}
+
+/** Maps retained route keys to current keys when the same GTFS route is renamed. */
+export function routeKeyAliases(
+  previous: readonly RouteKeyVersion[],
+  current: readonly RouteKeyVersion[],
+): Map<string, string> {
+  const keysById = new Map<string, Set<string>>();
+  const currentKeys = new Set<string>();
+  for (const { key, gtfsRouteId } of current) {
+    currentKeys.add(key);
+    let keys = keysById.get(gtfsRouteId);
+    if (!keys) keysById.set(gtfsRouteId, (keys = new Set()));
+    keys.add(key);
+  }
+
+  const candidates = new Map<string, Set<string>>();
+  for (const { key, gtfsRouteId } of previous) {
+    if (currentKeys.has(key)) continue;
+    const keys = keysById.get(gtfsRouteId);
+    if (!keys || keys.size !== 1) continue;
+    const currentKey = keys.values().next().value;
+    if (currentKey === undefined || currentKey === key) continue;
+    let aliases = candidates.get(key);
+    if (!aliases) candidates.set(key, (aliases = new Set()));
+    aliases.add(currentKey);
+  }
+
+  const aliases = new Map<string, string>();
+  for (const [key, values] of candidates) {
+    if (values.size !== 1) continue;
+    const currentKey = values.values().next().value;
+    if (currentKey !== undefined) aliases.set(key, currentKey);
+  }
+  return aliases;
+}
+
 /**
  * The snapshot with only the vehicles on routes we draw. With `keyById` (GTFS route_id → route key,
- * from the plans built now), vehicles recorded on a route drawn since then get its key.
+ * from the plans built now), vehicles recorded on a route drawn since then get its key. `keyAliases`
+ * rekeys tracked vehicles when a retained plan changed the route's key.
  */
 export function trackedOnly(
   s: RtSnapshot,
   keyById?: ReadonlyMap<string, string>,
+  keyAliases?: ReadonlyMap<string, string>,
 ): RtSnapshot {
-  if (s.vehicles.every(isTracked)) return s;
+  if (s.vehicles.every((v) => isTracked(v) && !keyAliases?.has(v.routeKey)))
+    return s;
   const vehicles: RtVehicle[] = [];
   for (const v of s.vehicles) {
-    if (isTracked(v)) vehicles.push(v);
-    else {
+    if (isTracked(v)) {
+      const key = keyAliases?.get(v.routeKey);
+      vehicles.push(key ? { ...v, routeKey: key } : v);
+    } else {
       const key = keyById?.get(v.routeKey.slice(UNTRACKED.length));
       if (key) vehicles.push({ ...v, routeKey: key });
     }

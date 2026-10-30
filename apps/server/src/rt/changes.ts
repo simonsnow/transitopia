@@ -29,6 +29,7 @@ export interface TripChangeInput {
 export class ServiceChanges {
   private days = new Map<ServiceDate, RtDayChanges>();
   private writing: Promise<void> = Promise.resolve();
+  private routeKeyAliases = new Map<string, string>();
   /** The current version of each day asked for, until it changes. */
   private current = new Map<ServiceDate, { version: string; body: string }>();
   /** Recent versions' bodies per day, oldest first. */
@@ -42,6 +43,32 @@ export class ServiceChanges {
     this.record = record;
   }
 
+  setRouteKeyAliases(aliases: ReadonlyMap<string, string>): void {
+    this.routeKeyAliases = new Map(aliases);
+    for (const [date, day] of this.days)
+      this.days.set(date, this.currentRouteKeys(day));
+    this.current.clear();
+    this.versions.clear();
+  }
+
+  private currentRouteKeys(day: RtDayChanges): RtDayChanges {
+    if (!this.routeKeyAliases.size || !day.alerts.length) return day;
+    let changed = false;
+    const alerts = day.alerts.map((alert) => {
+      let alertChanged = false;
+      const entities = alert.entities.map((entity) => {
+        const routeKey = this.routeKeyAliases.get(entity.routeKey);
+        if (!routeKey) return entity;
+        alertChanged = true;
+        return { ...entity, routeKey };
+      });
+      if (!alertChanged) return alert;
+      changed = true;
+      return { ...alert, entities };
+    });
+    return changed ? { ...day, alerts } : day;
+  }
+
   private path(date: ServiceDate): string {
     return join(this.dir, `${date}.json`);
   }
@@ -51,7 +78,9 @@ export class ServiceChanges {
     let d = this.days.get(date);
     if (d) return d;
     try {
-      d = JSON.parse(await readFile(this.path(date), "utf8")) as RtDayChanges;
+      d = this.currentRouteKeys(
+        JSON.parse(await readFile(this.path(date), "utf8")) as RtDayChanges,
+      );
     } catch {
       d = emptyDayChanges(date);
     }

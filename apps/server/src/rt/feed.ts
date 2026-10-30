@@ -20,6 +20,7 @@ import {
   decodeSnapshot,
   encodeSnapshot,
   isTracked,
+  routeKeyAliases,
   trackedOnly,
   untrackedRouteKey,
   type RtSnapshot,
@@ -95,6 +96,7 @@ export class FeedPoller {
   private latest: RtSnapshot | null = null;
   private delays: TripDelays = new Map();
   private routeKeyById = new Map<string, string>();
+  private routeKeyAliases = new Map<string, string>();
   /** GTFS route_id → our key for SkyTrain lines (alerts). */
   private railKeyById = new Map<string, string>();
   private routesLoadedFrom: number | undefined;
@@ -150,6 +152,7 @@ export class FeedPoller {
       join(opts.historyDir, "changes"),
       opts.record,
     );
+    this.changes.setRouteKeyAliases(this.routeKeyAliases);
     this.ledger = new RequestLedger(this.schedule.dailyCap);
   }
 
@@ -205,7 +208,10 @@ export class FeedPoller {
     await this.loadLedger();
     if (this.opts.record) {
       const last = await this.recorder.lastSnapshot();
-      this.latest = last ? trackedOnly(last, this.routeKeyById) : null;
+      this.latest =
+        last ?
+          trackedOnly(last, this.routeKeyById, this.routeKeyAliases)
+        : null;
     }
     const now = Date.now();
     const s = this.schedule;
@@ -371,20 +377,30 @@ export class FeedPoller {
       ) as FeedManifest;
       const map = new Map<string, string>();
       const rail = new Map<string, string>();
+      const previousRoutes: { key: string; gtfsRouteId: string }[] = [];
+      let currentRoutes: { key: string; gtfsRouteId: string }[] = [];
       for (const f of manifest.feeds) {
         const plan = JSON.parse(
           await readFile(join(PUBLIC_DIR, f.path), "utf8"),
         ) as Pick<ServicePlan, "routes">;
+        const versionRoutes: { key: string; gtfsRouteId: string }[] = [];
         for (const r of plan.routes) {
-          if (r.kind === "bus") map.set(r.gtfsRouteId, r.key);
+          if (r.kind === "bus") {
+            map.set(r.gtfsRouteId, r.key);
+            versionRoutes.push({ key: r.key, gtfsRouteId: r.gtfsRouteId });
+          }
           if (r.kind === "skytrain") rail.set(r.gtfsRouteId, r.key);
         }
+        previousRoutes.push(...versionRoutes);
+        currentRoutes = versionRoutes;
       }
       if (this.routesLoadedFrom !== undefined)
         this.log(
           `timetable data changed: now tracking ${new Set(map.values()).size} bus routes`,
         );
       this.routeKeyById = map;
+      this.routeKeyAliases = routeKeyAliases(previousRoutes, currentRoutes);
+      this.changes.setRouteKeyAliases(this.routeKeyAliases);
       this.railKeyById = rail;
       this.routesLoadedFrom = mtime;
       // Filtered hours depend on the routes drawn (trackedOnly).
@@ -625,7 +641,13 @@ export class FeedPoller {
       if (!line) continue;
       try {
         lines.push(
-          encodeSnapshot(trackedOnly(decodeSnapshot(line), this.routeKeyById)),
+          encodeSnapshot(
+            trackedOnly(
+              decodeSnapshot(line),
+              this.routeKeyById,
+              this.routeKeyAliases,
+            ),
+          ),
         );
       } catch {
         // The open hour's last line may be half written.
