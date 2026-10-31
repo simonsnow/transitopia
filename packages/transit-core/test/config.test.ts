@@ -277,6 +277,27 @@ describe("regions and feeds", () => {
     }
   });
 
+  it("selects the Fraser Valley primary feed for Abbotsford and Mission, not Langley", () => {
+    const covers = (id: string, lng: number, lat: number) => {
+      const region = regions.find((r) => r.id === id)!.region;
+      return (region.areas ?? [region.bbox]).some(
+        ([west, south, east, north]) =>
+          lng >= west && lng <= east && lat >= south && lat <= north,
+      );
+    };
+
+    for (const [name, lng, lat] of [
+      ["Abbotsford Transit Centre", -122.28638, 49.05667],
+      ["Mission City Station", -122.30515, 49.13388],
+    ] as const) {
+      expect(covers("fraser-valley", lng, lat), name).toBe(true);
+      expect(covers("metro-vancouver", lng, lat), name).toBe(false);
+    }
+
+    expect(covers("metro-vancouver", -122.65423, 49.10566)).toBe(true);
+    expect(covers("fraser-valley", -122.65423, 49.10566)).toBe(false);
+  });
+
   it("fills in a key, and refuses URLs that don't agree with apiKey", () => {
     const rt = parseFeed(translink()).realtime!;
     expect(realtimeUrl(rt, "alerts", "k&y")).toBe(
