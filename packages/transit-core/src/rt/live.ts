@@ -42,6 +42,8 @@ export interface LiveAisSection extends DataSection {
   encoding: "ais-fixes/1";
   /** The route keys the fixes correct. */
   routes: string[];
+  /** @deprecated Use `routes`; retained for clients built for single-route AIS feeds. */
+  route?: string;
   from: number;
   to: number;
   data: AisRow[];

@@ -66,6 +66,8 @@ import {
   type LiveAisSection,
   type LiveTransitResponse,
 } from "@transitopia/transit-core/rt/live.ts";
+import type { RtDayChanges } from "@transitopia/transit-core/rt/changes.ts";
+import type { SnapshotRow } from "@transitopia/transit-core/rt/types.ts";
 import { AlertDrafts } from "./alerts.ts";
 import {
   draftFromAlert,
@@ -128,8 +130,24 @@ export function notModified(
 /** How long the edge may keep a day file of a date still in progress (s); see feed.json → ais.liveWindowS. */
 const AIS_DAY_MAX_AGE_S = 60;
 
-/** A region as the service needs it: its id and the feeds it shows. */
-export type ServedRegion = Pick<RegionInfo, "id" | "feeds">;
+/** A region as the service needs it. */
+export type ServedRegion = Pick<RegionInfo, "id" | "feeds" | "aliases">;
+type RegionAlias = NonNullable<RegionInfo["aliases"]>[number];
+
+function mapAliasChanges(body: string, agency: string): string {
+  const changes = JSON.parse(body) as RtDayChanges;
+  const suffix = `@${agency}`;
+  changes.alerts = changes.alerts.flatMap((alert) => {
+    const entities = alert.entities
+      .filter((entity) => entity.routeKey.endsWith(suffix))
+      .map((entity) => ({
+        ...entity,
+        routeKey: entity.routeKey.slice(0, -suffix.length),
+      }));
+    return entities.length ? [{ ...alert, entities }] : [];
+  });
+  return JSON.stringify(changes);
+}
 
 export interface RtServiceOptions {
   /** Where recordings go: each feed's under <historyDir>/<feed>/, the leader's lock file at the top. */
@@ -463,6 +481,7 @@ export class RtService {
   async liveTransit(
     region: ServedRegion,
     now = Date.now(),
+    alias?: RegionAlias,
   ): Promise<LiveTransitResponse> {
     const r: LiveTransitResponse = {
       schema: LIVE_SCHEMA,
@@ -470,14 +489,48 @@ export class RtService {
       sources: {},
     };
     const due: number[] = [];
-    for (const feed of region.feeds) {
+    const feeds =
+      alias?.feeds.map((mapping) => [mapping.feed, mapping] as const)
+      ?? region.feeds.map((feed) => [feed, undefined] as const);
+    for (const [feed, mapping] of feeds) {
       const p = this.pollers.get(feed);
       if (!p) continue;
-      Object.assign(r.sources, await p.liveSections(region.id, now));
+      const sections = await p.liveSections(region.id, now);
+      if (!mapping || !alias) Object.assign(r.sources, sections);
+      else {
+        const suffix = `@${mapping.agency}`;
+        for (const [source, original] of Object.entries(sections)) {
+          const legacySource = `${mapping.id}${source.slice(feed.length)}`;
+          if (original.kind === "vehicles") {
+            const vehicles = original.data;
+            if (vehicles) {
+              vehicles.v = vehicles.v.flatMap((row): SnapshotRow[] => {
+                if (!row[3].endsWith(suffix)) return [];
+                row[3] = row[3].slice(0, -suffix.length);
+                return [row];
+              });
+            }
+            r.sources[legacySource] = original;
+          } else {
+            const versions = Object.fromEntries(
+              Object.entries(original.versions).map(([date, pointer]) => [
+                date,
+                {
+                  ...pointer,
+                  path: pointer.path
+                    .replace(`regions/${region.id}/`, `regions/${alias.id}/`)
+                    .replace(`/${feed}/changes/`, `/${mapping.id}/changes/`),
+                },
+              ]),
+            );
+            r.sources[legacySource] = { ...original, versions };
+          }
+        }
+      }
       const next = p.nextDataAt();
       if (next !== undefined) due.push(next);
     }
-    for (const feed of region.feeds) {
+    for (const feed of alias ? [] : region.feeds) {
       const a = this.aisFeeds.get(feed);
       if (!a) continue;
       r.sources[`${feed}/ais`] = this.aisSection(a);
@@ -504,6 +557,7 @@ export class RtService {
         kind: "ais",
         encoding: "ais-fixes/1",
         routes: a.cfg.routes,
+        ...(a.cfg.routes.length === 1 ? { route: a.cfg.routes[0]! } : {}),
         status: "unavailable",
         error: "No aisstream.io API key configured",
         from: 0,
@@ -516,6 +570,7 @@ export class RtService {
       kind: "ais",
       encoding: "ais-fixes/1",
       routes: a.cfg.routes,
+      ...(a.cfg.routes.length === 1 ? { route: a.cfg.routes[0]! } : {}),
       status: st.connected ? "ok" : "stale",
       from: w.from,
       to: w.to,
@@ -531,10 +586,18 @@ export class RtService {
     rest: string,
     now = Date.now(),
   ): Promise<HttpResult> {
-    const region = this.regions.find((r) => r.id === id);
-    if (!region) return json(404, { error: "No such region" });
+    const regionMatch =
+      this.regions.find((r) => r.id === id) ?
+        { region: this.regions.find((r) => r.id === id)!, alias: undefined }
+      : this.regions.flatMap((r) =>
+          (r.aliases ?? [])
+            .filter((alias) => alias.id === id)
+            .map((alias) => ({ region: r, alias })),
+        )[0];
+    if (!regionMatch) return json(404, { error: "No such region" });
+    const { region, alias } = regionMatch;
     if (rest === "/live/transit") {
-      const r = await this.liveTransit(region, now);
+      const r = await this.liveTransit(region, now, alias);
       // The edge keeps it until new data is due, and never longer than clients poll.
       const maxAge =
         r.nextAt === null ?
@@ -583,9 +646,11 @@ export class RtService {
       /^\/days\/(\d{8})\/([a-z0-9-]+)\/changes(?:\/([0-9a-f]+)\.json)?$/.exec(
         rest,
       );
+    const aliasFeed = changes && alias?.feeds.find((f) => f.id === changes[2]);
+    const feed = aliasFeed?.feed ?? changes?.[2];
     const poller =
-      changes && region.feeds.includes(changes[2]!) ?
-        this.pollers.get(changes[2]!)
+      changes && feed && region.feeds.includes(feed) ?
+        this.pollers.get(feed)
       : undefined;
     if (changes && poller) {
       const date = changes[1]!;
@@ -600,11 +665,15 @@ export class RtService {
               { error: "No such version" },
               { "Cache-Control": "no-store" },
             )
-          : tagged(body, "public, max-age=31536000, immutable");
+          : tagged(
+              aliasFeed ? mapAliasChanges(body, aliasFeed.agency) : body,
+              "public, max-age=31536000, immutable",
+            );
       }
       const recent = date >= addDays(localDate(now), -1);
+      const body = (await poller.changes.versioned(date)).body;
       return tagged(
-        (await poller.changes.versioned(date)).body,
+        aliasFeed ? mapAliasChanges(body, aliasFeed.agency) : body,
         `public, max-age=${recent ? 30 : 3600}`,
       );
     }

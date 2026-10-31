@@ -576,36 +576,72 @@ const bounds = z
   .tuple([lon, lat, lon, lat])
   .refine(([w, s, e, n]) => w < e && s < n, "[west, south, east, north]");
 
-const region = z.strictObject({
-  id: slug,
-  name: z.string().min(1),
-  timezone: z.string().min(1),
-  /**
-   * The feeds whose transit the region shows (config/feeds/<id>/). A feed can be in several regions (a
-   * ferry between two), and it is fetched, built, polled and recorded once whichever regions show it.
-   */
-  feeds: z
-    .array(slug)
-    .min(1)
-    .refine((fs) => new Set(fs).size === fs.length, "feeds are listed once"),
-  /** Where the region's transit data applies. */
-  bbox: bounds,
-  /**
-   * Where the site shows this region, as rectangles inside the bbox, for a region whose shape a
-   * single rectangle can't follow without covering another region's (docs/DESIGN.md#regions-and-feeds);
-   * absent, the bbox. Regions' areas don't overlap.
-   */
-  areas: z.array(bounds).min(1).exactOptional(),
-  /** The first view of /transit when the URL has no map position. */
-  initialBounds: bounds,
-  timezoneChecks: z.array(
-    z.strictObject({
-      at: z.iso.datetime(),
-      utcOffsetMinutes: z.number().int(),
-      reason: z.string().min(1),
-    }),
-  ),
-});
+const region = z
+  .strictObject({
+    id: slug,
+    name: z.string().min(1),
+    timezone: z.string().min(1),
+    /**
+     * The feeds whose transit the region shows (config/feeds/<id>/). A feed can be in several regions (a
+     * ferry between two), and it is fetched, built, polled and recorded once whichever regions show it.
+     */
+    feeds: z
+      .array(slug)
+      .min(1)
+      .refine((fs) => new Set(fs).size === fs.length, "feeds are listed once"),
+    /** Previous public region/feed ids that remain available as API aliases. */
+    aliases: z
+      .array(
+        z.strictObject({
+          id: slug,
+          feeds: z
+            .array(
+              z.strictObject({
+                id: slug,
+                feed: slug,
+                agency: slug,
+              }),
+            )
+            .min(1),
+        }),
+      )
+      .refine(
+        (aliases) => new Set(aliases.map((a) => a.id)).size === aliases.length,
+        "alias ids are unique",
+      )
+      .refine(
+        (aliases) =>
+          aliases.every(
+            (a) => new Set(a.feeds.map((f) => f.id)).size === a.feeds.length,
+          ),
+        "alias feed ids are unique",
+      )
+      .exactOptional(),
+    /** Where the region's transit data applies. */
+    bbox: bounds,
+    /**
+     * Where the site shows this region, as rectangles inside the bbox, for a region whose shape a
+     * single rectangle can't follow without covering another region's (docs/DESIGN.md#regions-and-feeds);
+     * absent, the bbox. Regions' areas don't overlap.
+     */
+    areas: z.array(bounds).min(1).exactOptional(),
+    /** The first view of /transit when the URL has no map position. */
+    initialBounds: bounds,
+    timezoneChecks: z.array(
+      z.strictObject({
+        at: z.iso.datetime(),
+        utcOffsetMinutes: z.number().int(),
+        reason: z.string().min(1),
+      }),
+    ),
+  })
+  .refine(
+    (r) =>
+      (r.aliases ?? []).every(
+        (a) => a.id !== r.id && a.feeds.every((f) => r.feeds.includes(f.feed)),
+      ),
+    "aliases must differ from the region id and refer only to its feeds",
+  );
 
 export type FeedInfo = z.output<typeof feed>;
 export type OperatorInfo = z.output<typeof operator>;

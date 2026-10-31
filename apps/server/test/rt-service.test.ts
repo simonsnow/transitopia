@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import GtfsRealtimeBindings from "gtfs-realtime-bindings";
 import { notModified, RtService } from "../src/rt/service.ts";
-import type { LiveTransitResponse } from "@transitopia/transit-core/rt/live.ts";
+import type {
+  LiveChangesSection,
+  LiveTransitResponse,
+  LiveVehiclesSection,
+} from "@transitopia/transit-core/rt/live.ts";
+import type { CompactSnapshot } from "@transitopia/transit-core/rt/types.ts";
 import { health, type AppDeps } from "../src/app.ts";
 
 const { FeedMessage } = GtfsRealtimeBindings.transit_realtime;
@@ -163,6 +168,8 @@ describe("RtService", () => {
     expect(body.sources["translink/ais"]).toMatchObject({
       kind: "ais",
       status: "unavailable",
+      routes: ["seabus"],
+      route: "seabus",
       data: [],
     });
     expect(body.sources["dispatch"]).toBeUndefined();
@@ -212,6 +219,144 @@ describe("RtService", () => {
     expect((await get("/regions/elsewhere/live/transit")).status).toBe(404);
     expect((await get("/regions/test-region/nothing")).status).toBe(404);
     expect(upstream.mock.calls.length).toBe(3);
+  });
+
+  it("serves legacy region/feed aliases with old source and route keys", async () => {
+    dir = await mkdtemp(join(tmpdir(), "rt-test-"));
+    service = new RtService({
+      historyDir: dir,
+      record: false,
+      log: () => {},
+      dispatch: false,
+      regions: [
+        {
+          id: "vancouver-island",
+          feeds: ["translink"],
+          aliases: [
+            {
+              id: "greater-victoria",
+              feeds: [
+                {
+                  id: "bc-transit-victoria",
+                  feed: "translink",
+                  agency: "victoria",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const poller = service.pollers.get("translink")!;
+    const date = "20261030";
+    const version = "abcdef";
+    const snapshot: CompactSnapshot = {
+      t: 1,
+      h: 1,
+      v: [
+        [
+          "victoria-bus",
+          null,
+          "trip-v",
+          "95@victoria",
+          49.2,
+          -123.1,
+          null,
+          1,
+          null,
+          null,
+          null,
+          null,
+        ],
+        [
+          "nanaimo-bus",
+          null,
+          "trip-n",
+          "1@nanaimo",
+          49.2,
+          -123.1,
+          null,
+          1,
+          null,
+          null,
+          null,
+          null,
+        ],
+      ],
+    };
+    vi.spyOn(poller, "liveSections").mockResolvedValue({
+      "translink/vehicles": {
+        kind: "vehicles",
+        encoding: "rt-snapshot/1",
+        status: "ok",
+        data: snapshot,
+      } satisfies LiveVehiclesSection,
+      "translink/changes": {
+        kind: "changes",
+        versions: {
+          [date]: {
+            version,
+            path: `regions/vancouver-island/days/${date}/translink/changes/${version}.json`,
+          },
+        },
+      } satisfies LiveChangesSection,
+    });
+    vi.spyOn(poller.changes, "version").mockReturnValue(
+      JSON.stringify({
+        date,
+        cancelled: {},
+        skipped: {},
+        alerts: [
+          {
+            id: "victoria",
+            entities: [{ routeKey: "95@victoria" }],
+            stopIds: [],
+            periods: [],
+            header: "Victoria alert",
+            description: "",
+            seen: [1, 1],
+          },
+          {
+            id: "nanaimo",
+            entities: [{ routeKey: "1@nanaimo" }],
+            stopIds: [],
+            periods: [],
+            header: "Nanaimo alert",
+            description: "",
+            seen: [1, 1],
+          },
+        ],
+      }),
+    );
+
+    const live = await service.handle(
+      "/regions/greater-victoria/live/transit",
+      new URLSearchParams(),
+    );
+    const body = JSON.parse(String(live.body)) as LiveTransitResponse;
+    const vehicles = body.sources["bc-transit-victoria/vehicles"];
+    if (vehicles?.kind !== "vehicles") throw new Error("no vehicles section");
+    expect(vehicles.data?.v).toHaveLength(1);
+    expect(vehicles.data?.v[0]?.slice(0, 4)).toEqual([
+      "victoria-bus",
+      null,
+      "trip-v",
+      "95",
+    ]);
+    const changes = body.sources["bc-transit-victoria/changes"];
+    if (changes?.kind !== "changes") throw new Error("no changes section");
+    const pointer = changes.versions[date]!;
+    expect(pointer.path).toBe(
+      `regions/greater-victoria/days/${date}/bc-transit-victoria/changes/${version}.json`,
+    );
+    const file = await service.handle(
+      `/${pointer.path}`,
+      new URLSearchParams(),
+    );
+    expect(file.status).toBe(200);
+    expect(JSON.parse(String(file.body)).alerts).toMatchObject([
+      { id: "victoria", entities: [{ routeKey: "95" }] },
+    ]);
   });
 
   it("records each request in a ledger and resumes the schedule after a restart", async () => {

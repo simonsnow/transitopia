@@ -5,6 +5,19 @@
   "name": "Vancouver Island and Sunshine Coast",
   "timezone": "America/Vancouver",
   "feeds": ["bc-transit-vancouver-island", "bc-ferries"],
+  "$aliases": "Keep the former single-system Victoria API available; its vehicles and service-change route keys use the old unqualified route names.",
+  "aliases": [
+    {
+      "id": "greater-victoria",
+      "feeds": [
+        {
+          "id": "bc-transit-victoria",
+          "feed": "bc-transit-vancouver-island",
+          "agency": "victoria"
+        }
+      ]
+    }
+  ],
   "bbox": [-127.65, 48.3, -123.2, 50.78],
   "areas": [
     [-125.98, 48.3, -123.2, 48.95],

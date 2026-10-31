@@ -169,7 +169,8 @@ config/
   operators/<id>/  operator.json: who runs the vehicles (TransLink, BC Transit), and its overrides of the defaults
   feeds/<id>/      feed.json: one agency's published data (GTFS, GTFS-RT, request budget, vessels' AIS),
                    naming its operator; routes.json: overrides and exclusions of its routes, by name
-  regions/<id>/    region.json: a place on the map (bbox, time zone, first view, the feeds it shows);
+  regions/<id>/    region.json: a place on the map (bbox, time zone, first view, the feeds it shows,
+                   optional public API aliases for retired region/feed ids);
                    its settings (rt.json where it has one, and for Metro Vancouver operations, dispatch, seabus);
                    infrastructure/, scenarios/, observations/, disruptions/; README, OPEN-QUESTIONS
 ```
