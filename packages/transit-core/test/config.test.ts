@@ -298,6 +298,27 @@ describe("regions and feeds", () => {
     expect(covers("fraser-valley", -122.65423, 49.10566)).toBe(false);
   });
 
+  it("keeps the shared Abbotsford-side viewport on the Fraser Valley region", () => {
+    const view = {
+      west: -122.6083,
+      south: 49.0003,
+      east: -122.396,
+      north: 49.119,
+    };
+    const visibleArea = (id: string) => {
+      const region = regions.find((r) => r.id === id)!.region;
+      return (region.areas ?? [region.bbox]).reduce((total, [w, s, e, n]) => {
+        const width = Math.min(e, view.east) - Math.max(w, view.west);
+        const height = Math.min(n, view.north) - Math.max(s, view.south);
+        return total + (width > 0 && height > 0 ? width * height : 0);
+      }, 0);
+    };
+
+    expect(visibleArea("fraser-valley")).toBeGreaterThan(
+      visibleArea("metro-vancouver"),
+    );
+  });
+
   it("fills in a key, and refuses URLs that don't agree with apiKey", () => {
     const rt = parseFeed(translink()).realtime!;
     expect(realtimeUrl(rt, "alerts", "k&y")).toBe(
