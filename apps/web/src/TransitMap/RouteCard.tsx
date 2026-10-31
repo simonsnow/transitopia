@@ -87,7 +87,10 @@ const RouteCardBody: React.FC<{
       tile={
         route.mode === "bus" ?
           { text: routeName(route), ...colors }
-        : { icon: route.mode === "ferry" ? "ferry" : "train", ...colors }
+        : {
+            icon: route.mode === "ferry" ? "ferry" : "train",
+            ...colors,
+          }
       }
       eyebrow={
         route.mode === "bus" ? "Bus route"
