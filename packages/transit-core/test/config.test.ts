@@ -277,46 +277,11 @@ describe("regions and feeds", () => {
     }
   });
 
-  it("selects the Fraser Valley primary feed for Abbotsford and Mission, not Langley", () => {
-    const covers = (id: string, lng: number, lat: number) => {
-      const region = regions.find((r) => r.id === id)!.region;
-      return (region.areas ?? [region.bbox]).some(
-        ([west, south, east, north]) =>
-          lng >= west && lng <= east && lat >= south && lat <= north,
-      );
-    };
-
-    for (const [name, lng, lat] of [
-      ["Abbotsford Transit Centre", -122.28638, 49.05667],
-      ["Mission City Station", -122.30515, 49.13388],
-    ] as const) {
-      expect(covers("fraser-valley", lng, lat), name).toBe(true);
-      expect(covers("metro-vancouver", lng, lat), name).toBe(false);
-    }
-
-    expect(covers("metro-vancouver", -122.65423, 49.10566)).toBe(true);
-    expect(covers("fraser-valley", -122.65423, 49.10566)).toBe(false);
-  });
-
-  it("keeps the shared Abbotsford-side viewport on the Fraser Valley region", () => {
-    const view = {
-      west: -122.6083,
-      south: 49.0003,
-      east: -122.396,
-      north: 49.119,
-    };
-    const visibleArea = (id: string) => {
-      const region = regions.find((r) => r.id === id)!.region;
-      return (region.areas ?? [region.bbox]).reduce((total, [w, s, e, n]) => {
-        const width = Math.min(e, view.east) - Math.max(w, view.west);
-        const height = Math.min(n, view.north) - Math.max(s, view.south);
-        return total + (width > 0 && height > 0 ? width * height : 0);
-      }, 0);
-    };
-
-    expect(visibleArea("fraser-valley")).toBeGreaterThan(
-      visibleArea("metro-vancouver"),
-    );
+  it("keeps the Fraser Valley display area east of Metro Vancouver's bbox", () => {
+    const metro = regions.find((r) => r.id === "metro-vancouver")!.region;
+    const fraser = regions.find((r) => r.id === "fraser-valley")!.region;
+    expect(metro.areas).toBeUndefined();
+    expect(fraser.areas).toEqual([[-122.0, 48.95, -121.3, 49.55]]);
   });
 
   it("fills in a key, and refuses URLs that don't agree with apiKey", () => {

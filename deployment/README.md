@@ -117,6 +117,11 @@ and the repo is an npm workspace, so the Cloudflare build settings need:
   Alternatively, turn on Web Analytics in the Cloudflare dashboard, which injects the beacon itself.
 
 Production data locations are in `apps/web/.env.production`.
+Region-selection areas are bundled into the website from `config/regions/*/region.json`. Changing
+them takes effect only after Cloudflare Pages rebuilds the frontend; adjust adjacent regions
+together so a selection change does not hide cross-boundary routes. Until cross-region overlays
+support live vehicles and interactive stops, keep the established Metro Vancouver/Fraser Valley
+boundary.
 
 ### The server (api.transitopia.org)
 
