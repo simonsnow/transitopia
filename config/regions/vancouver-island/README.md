@@ -1,6 +1,8 @@
 # Vancouver Island and Sunshine Coast
 
-A bus-only region showing BC Transit's eleven transit systems on Vancouver Island, the Gulf Islands and the Sunshine Coast as one map, so that where two systems meet (Deep Bay, Duncan, Oyster River, Victoria's Douglas St) both are shown and a transfer can be judged. They are one feed, `bc-transit-vancouver-island` ([config/feeds/bc-transit-vancouver-island/](../../feeds/bc-transit-vancouver-island/)), merged from each system's GTFS with each system as an agency of its own ([docs/DESIGN.md → Regions and feeds](../../../docs/DESIGN.md#regions-and-feeds)). It replaced a region per system (Greater Victoria from 2026-10-14; Nanaimo, Comox Valley and the rest briefly on 2026-10-28), whose rectangles couldn't follow systems that share ground.
+A region showing BC Transit's eleven transit systems on Vancouver Island, the Gulf Islands and the Sunshine Coast as one map, so that where two systems meet (Deep Bay, Duncan, Oyster River, Victoria's Douglas St) both are shown and a transfer can be judged. They are one feed, `bc-transit-vancouver-island` ([config/feeds/bc-transit-vancouver-island/](../../feeds/bc-transit-vancouver-island/)), merged from each system's GTFS with each system as an agency of its own ([docs/DESIGN.md → Regions and feeds](../../../docs/DESIGN.md#regions-and-feeds)). It replaced a region per system (Greater Victoria from 2026-10-14; Nanaimo, Comox Valley and the rest briefly on 2026-10-28), whose rectangles couldn't follow systems that share ground.
+
+The region also shows BC Ferries and Hullo as overlay feeds. Hullo's Vancouver–Nanaimo route is listed here as well as in Metro Vancouver, so it remains on the map when the viewport switches to this region.
 
 | Path | What |
 |---|---|

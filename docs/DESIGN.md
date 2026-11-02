@@ -187,7 +187,7 @@ config/
 |---|---|---|
 | `metro-vancouver` | `translink` (TransLink) | SkyTrain, SeaBus, West Coast Express and every bus route (99 B-Line and R1–R6 RapidBus in their own colours; HandyDART excluded) |
 | `greater-victoria` | `bc-transit-victoria` (BC Transit) | Every bus route (95 Blink RapidBus in its own colour) |
-| `vancouver-island` | `bc-transit-vancouver-island` (BC Transit, connected systems merged), `bc-ferries` | Every bus route, Victoria to Port Hardy and Tofino to Gibsons (95 Blink and 1 Nanaimo Rapid Line in their own colours), and ferry sailings |
+| `vancouver-island` | `bc-transit-vancouver-island` (BC Transit, connected systems merged), `bc-ferries`, `hullo` | Every bus route, Victoria to Port Hardy and Tofino to Gibsons (95 Blink and 1 Nanaimo Rapid Line in their own colours), BC Ferries sailings, and Hullo's Vancouver–Nanaimo sailings |
 | `central-okanagan` | `bc-transit-kelowna` (BC Transit; Okanagan and Shuswap systems merged) | Every bus route in the feed, including the 97 Okanagan RapidBus |
 | `fraser-valley` | `bc-transit-fraser-valley` (BC Transit, operator 13) | Every route in Agassiz-Harrison, Central Fraser Valley (Abbotsford and Mission), Chilliwack and Hope; route 21 to Aldergrove and route 66 to Lougheed |
 | `merritt` | `bc-transit-merritt` (BC Transit) | Every Merritt bus route |

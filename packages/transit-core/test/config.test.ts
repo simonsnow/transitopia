@@ -300,6 +300,13 @@ describe("regions, feeds and rail networks", () => {
     }
   });
 
+  it("keeps Hullo visible in both regions that cover its crossing", () => {
+    for (const id of ["metro-vancouver", "vancouver-island"]) {
+      const region = regions.find((r) => r.id === id)?.region;
+      expect(region?.feeds, id).toContain("hullo");
+    }
+  });
+
   it("keeps the Fraser Valley display area east of Metro Vancouver's bbox", () => {
     const metro = regions.find((r) => r.id === "metro-vancouver")!.region;
     const fraser = regions.find((r) => r.id === "fraser-valley")!.region;

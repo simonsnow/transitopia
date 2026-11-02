@@ -1,9 +1,9 @@
 {
   "$comment": "Region record (docs/DESIGN.md#regions-and-feeds). bbox: where this region's transit data applies, every system from Victoria to Port Hardy and Tofino to Gibsons, [west, south, east, north]. areas: where the site shows it, two rectangles round Metro Vancouver's bbox (south of 48.95° N, east to Victoria; north of it, east to Langdale). initialBounds: the first view of /transit when the URL has no map position (Victoria's routes, Langford to Swartz Bay and UVic).",
   "id": "vancouver-island",
-  "$feeds": "BC Transit's systems, its primary feed, and BC Ferries' sailings over it (docs/DESIGN.md#overlay-feeds), also shown in Metro Vancouver.",
+  "$feeds": "BC Transit's systems, BC Ferries' sailings over it, and Hullo's Vancouver–Nanaimo route (docs/DESIGN.md#overlay-feeds). Hullo is also listed in Metro Vancouver so the route remains visible when the map changes regions.",
   "name": "Vancouver Island and Sunshine Coast",
-  "feeds": ["bc-transit-vancouver-island", "bc-ferries"],
+  "feeds": ["bc-transit-vancouver-island", "bc-ferries", "hullo"],
   "$aliases": "Keep the former single-system Victoria API available; its vehicles and service-change route keys use the old unqualified route names.",
   "aliases": [
     {
