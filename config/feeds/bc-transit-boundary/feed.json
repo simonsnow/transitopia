@@ -4,6 +4,14 @@
   "name": "BC Transit (Boundary Route 1)",
   "operator": "bc-transit",
   "timezone": "America/Vancouver",
+  "$timezoneChecks": "BC moved to permanent UTC-7 in 2026 (tzdata 2026b, https://data.iana.org/time-zones/tzdb/NEWS); the server refuses to start with older time zone data.",
+  "timezoneChecks": [
+    {
+      "at": "2026-11-02T20:00:00Z",
+      "utcOffsetMinutes": -420,
+      "reason": "British Columbia's permanent UTC-7 (tzdata 2026b or later)"
+    }
+  ],
   "dataset": "bc-transit-gtfs",
   "static": {
     "$comment": "A small GTFS transcribed from the published Friday Route 1 timetable, which requires booking by 2 p.m. the previous day. The page has no timetable validity end date; service is assumed through 2027-12-31 (config/regions/kootenays/OPEN-QUESTIONS.md #7). Only Route 1 is included; Routes 2 and 70 (on-request/Health Connections) are not.",

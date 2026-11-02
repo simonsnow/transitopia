@@ -16,20 +16,22 @@ export const basemapTiles: string =
   env.VITE_BASEMAP_TILES
   ?? `pmtiles://${absolute("/dev-data/tiles/protomaps-bc.pmtiles")}`;
 
-/** The cycling tiles: a TileJSON URL, or pmtiles:// for a local build (npm run data:cycling). */
-export const cyclingTiles: string =
-  env.VITE_CYCLING_MAP_TILES_CDN
-  ?? `pmtiles://${absolute("/dev-data/tiles/transitopia-cycling-british-columbia.pmtiles")}`;
-
 /** Basemap fonts and sprites (pipelines/tiles.ts), ending in "/". */
 export const basemapAssets: string = absolute(
   env.VITE_BASEMAP_ASSETS ?? "/dev-data/basemap-assets/",
 );
 
-/** Published transit data (…/data/feeds/<feed>/manifest.json), ending in "/". */
+/**
+ * Published data, ending in "/": transit (…/data/feeds/<feed>/manifest.json) and cycling
+ * (…/data/cycling/<area>/index.json, CyclingMap/cycling-data.ts).
+ */
 export const transitData: string = env.VITE_TRANSIT_DATA ?? "/dev-data/";
 
-/** The RT service (…/regions/<id>/live/transit), ending in "/"; undefined for schedules only. */
+/**
+ * The API server (…/feeds/<id>/live), ending in "/"; undefined for schedules only. In
+ * development, the local one (npm run server) unless VITE_TRANSIT_API says otherwise
+ * (vite.config.ts): set it empty for schedules only.
+ */
 export const transitApi: string | undefined = env.VITE_TRANSIT_API || undefined;
 
 /**

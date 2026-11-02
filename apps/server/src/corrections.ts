@@ -1,12 +1,17 @@
-// Corrections: observations and disruptions (docs/DESIGN.md#corrections-and-previews). With a database they live in the
+// Corrections: observations and disruptions (docs/DESIGN.md#corrections-and-previews), in the
 // observation_sets and disruptions tables with a review state (draft → previewing → confirmed |
-// discarded); without one, in the files under config/regions/metro-vancouver/ as before. The live
-// dispatcher reads whichever applies through `Corrections`; `export` writes the confirmed ones back
-// to the file format (for tests, reproducible bug reports and the static build).
+// discarded). The live dispatcher reads the confirmed ones through `Corrections`; `importFiles`
+// brings in the committed files (TransLink's observations in config/feeds/translink/observations/,
+// the SkyTrain's disruptions in config/networks/skytrain/disruptions/), and `export` writes the
+// confirmed ones back to that format (for tests, reproducible bug reports and the static build).
 
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { regionPaths, readJson } from "@transitopia/data/paths.ts";
+import {
+  correctionPaths,
+  readJson,
+  type RailNetwork,
+} from "@transitopia/data/paths.ts";
 import { datesOf, loadDisruptions } from "@transitopia/data/disruptions.ts";
 import type { Db } from "@transitopia/db/connect.ts";
 import type {
@@ -32,33 +37,6 @@ export interface CorrectionInputs {
 /** What the live dispatcher applies: confirmed corrections only. */
 export interface Corrections {
   load(): Promise<CorrectionInputs>;
-}
-
-export class FileCorrections implements Corrections {
-  private readonly observationsDir: string;
-  private readonly disruptionsDir: string;
-  private readonly log: (msg: string) => void;
-
-  constructor(opts: {
-    observationsDir: string;
-    disruptionsDir: string;
-    log?: (msg: string) => void;
-  }) {
-    this.observationsDir = opts.observationsDir;
-    this.disruptionsDir = opts.disruptionsDir;
-    this.log = opts.log ?? (() => {});
-  }
-
-  async load(): Promise<CorrectionInputs> {
-    const [observations, disruptions] = await Promise.all([
-      loadObservationFiles(this.observationsDir, this.log),
-      loadDisruptions(this.disruptionsDir),
-    ]);
-    return {
-      observations: observations.flatMap((f) => valid(f.file.observations)),
-      disruptions: disruptions.filter((d) => d.status !== "draft"),
-    };
-  }
 }
 
 export async function loadObservationFiles(
@@ -106,18 +84,21 @@ export const disruptionDates = (d: Disruption): string[] =>
   datesOf(d).map((date) => Temporal.PlainDate.from(date).toString());
 
 /** A row as the admin API sends it, with the columns it leaves out. */
-type Stored<T> = T & { region_id: string; created_at: Date };
-export type ObservationSetRow = Stored<ObservationRow>;
-export type DisruptionRow = Stored<ApiDisruptionRow>;
+type Stored<T> = T & { created_at: Date };
+export type ObservationSetRow = Stored<ObservationRow> & { feed_id: string };
+export type DisruptionRow = Stored<ApiDisruptionRow> & { network_id: string };
 
-/** Corrections in the database: what the dispatcher applies, and the admin's review queue. */
+/**
+ * Corrections in the database: what the dispatcher applies, and the admin's review queue. A rail
+ * network's: its disruptions, and its feed's observations.
+ */
 export class CorrectionsRepo implements Corrections {
   readonly db: Db;
-  readonly regionId: string;
+  readonly net: RailNetwork;
 
-  constructor(db: Db, regionId: string) {
+  constructor(db: Db, net: RailNetwork) {
     this.db = db;
-    this.regionId = regionId;
+    this.net = net;
   }
 
   async load(): Promise<CorrectionInputs> {
@@ -142,7 +123,7 @@ export class CorrectionsRepo implements Corrections {
     let q = this.db
       .selectFrom("observation_sets")
       .selectAll()
-      .where("region_id", "=", this.regionId);
+      .where("feed_id", "=", this.net.feed);
     if (states) q = q.where("state", "in", states);
     const rows = await q.orderBy("updated_at", "desc").execute();
     return rows.map((r) => ({
@@ -155,7 +136,7 @@ export class CorrectionsRepo implements Corrections {
     let q = this.db
       .selectFrom("disruptions")
       .selectAll()
-      .where("region_id", "=", this.regionId);
+      .where("network_id", "=", this.net.network);
     if (states) q = q.where("state", "in", states);
     const rows = await q.orderBy("updated_at", "desc").execute();
     return rows.map((r) => ({
@@ -188,7 +169,7 @@ export class CorrectionsRepo implements Corrections {
       .insertInto("observation_sets")
       .values({
         id,
-        region_id: this.regionId,
+        feed_id: this.net.feed,
         state: opts.state ?? "draft",
         title,
         body: JSON.stringify(body),
@@ -220,7 +201,7 @@ export class CorrectionsRepo implements Corrections {
       .insertInto("disruptions")
       .values({
         id: d.id,
-        region_id: this.regionId,
+        network_id: this.net.network,
         state: opts.state ?? (d.status === "confirmed" ? "confirmed" : "draft"),
         body: JSON.stringify(body),
         dates: disruptionDates(d),
@@ -265,28 +246,40 @@ export class CorrectionsRepo implements Corrections {
     state: ReviewState,
     by: string,
   ): Promise<boolean> {
-    const table = kind === "observations" ? "observation_sets" : "disruptions";
     const now = new Date();
-    const r = await this.db
-      .updateTable(table)
-      .set({
-        state,
-        updated_at: now,
-        ...(state === "confirmed" || state === "discarded" ?
-          { reviewed_by: by, reviewed_at: now }
-        : {}),
-      })
-      .where("id", "=", id)
-      .where("region_id", "=", this.regionId)
-      .executeTakeFirst();
+    const set = {
+      state,
+      updated_at: now,
+      ...(state === "confirmed" || state === "discarded" ?
+        { reviewed_by: by, reviewed_at: now }
+      : {}),
+    };
+    const r =
+      kind === "observations" ?
+        await this.db
+          .updateTable("observation_sets")
+          .set(set)
+          .where("id", "=", id)
+          .where("feed_id", "=", this.net.feed)
+          .executeTakeFirst()
+      : await this.db
+          .updateTable("disruptions")
+          .set(set)
+          .where("id", "=", id)
+          .where("network_id", "=", this.net.network)
+          .executeTakeFirst();
     return Number(r.numUpdatedRows) > 0;
   }
 
-  /** Import the committed files (default: its region's; idempotent: existing ids are left as they are). */
+  /**
+   * Import correction files from a directory laid out like config/ (correctionPaths; default: the
+   * committed files). Idempotent: existing ids are left as they are.
+   */
   async importFiles(
-    observationsDir = regionPaths(this.regionId).observations,
-    disruptionsDir = regionPaths(this.regionId).disruptions,
+    root?: string,
   ): Promise<{ observationSets: number; disruptions: number }> {
+    const { observations: observationsDir, disruptions: disruptionsDir } =
+      correctionPaths(this.net, root);
     let observationSets = 0;
     let disruptions = 0;
     const knownSets = new Set((await this.observationSets()).map((s) => s.id));
@@ -313,15 +306,18 @@ export class CorrectionsRepo implements Corrections {
   }
 
   /**
-   * Write the confirmed corrections as files: <dir>/observations/<id>.json and
-   * <dir>/disruptions/<id>.json (the formats in config/regions/metro-vancouver/*\/README.md). The
-   * directories are replaced, so they hold exactly what's confirmed.
+   * Write the confirmed corrections as files under `root`, laid out like config/ (correctionPaths):
+   * feeds/<feed>/observations/<id>.json and networks/<network>/disruptions/<id>.json (the formats in
+   * config/feeds/translink/observations/README.md and config/networks/skytrain/disruptions/README.md).
+   * The directories are replaced, so they hold exactly what's confirmed.
    */
   async exportFiles(
-    dir: string,
+    root: string,
   ): Promise<{ observationSets: number; disruptions: number }> {
-    const obsDir = join(dir, "observations");
-    const disDir = join(dir, "disruptions");
+    const { observations: obsDir, disruptions: disDir } = correctionPaths(
+      this.net,
+      root,
+    );
     await rm(obsDir, { recursive: true, force: true });
     await rm(disDir, { recursive: true, force: true });
     await mkdir(obsDir, { recursive: true });

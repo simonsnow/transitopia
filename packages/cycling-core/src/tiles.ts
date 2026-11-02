@@ -8,9 +8,18 @@ import {
   type LonLat,
 } from "./chains.ts";
 import type { WayClass } from "./classify.ts";
+import type { CyclingNetwork } from "./network.ts";
 
-/** The tiles' one layer: paths, lanes and bike parking. */
+/** The tiles' layer of paths, lanes and bike parking. */
 export const CYCLING_LAYER = "transitopia_cycling";
+/** The tiles' layer of bike routes: one feature each, whole, so a selected route is highlighted whole. */
+export const CYCLING_ROUTES_LAYER = "transitopia_cycling_routes";
+/**
+ * Bike routes are in the tiles up to this zoom, and the map overzooms them beyond it: their lines at
+ * z12 are within about 2 m, plenty for a highlight, and z13–14 would add 1.2 MB to BC's 6.2 MB
+ * (measured 2026-10-29).
+ */
+export const CYCLING_ROUTES_MAX_ZOOM = 12;
 export const CYCLING_MIN_ZOOM = 6;
 export const CYCLING_MAX_ZOOM = 14;
 /**
@@ -34,16 +43,33 @@ export type CyclingWayProperties = WayClass & {
   name?: string;
   /** OSM's surface value, from CYCLING_DETAIL_ZOOM. */
   surface?: string;
+  /** A ferry's operator (OSM's `operator`), from CYCLING_DETAIL_ZOOM. */
+  operator?: string;
   /** The OSM bike route relations it's part of, ids in ascending order, comma-separated; from CYCLING_DETAIL_ZOOM. */
   routes?: string;
 };
 
-/** Bike parking in the tiles: an OSM node, or the centre of an OSM way around an area. */
+/** Bike parking in the tiles: an OSM node, or the centre of an OSM way around an area, with its details. */
 export type BikeParkingProperties = {
   amenity: "bicycle_parking";
   name?: string;
+  /** OSM's `bicycle_parking`: the kind of parking (stands, wall_loops, lockers, …). */
+  bicycle_parking?: string;
+  /** Bikes it holds (only where OSM's `capacity` is a plain number). */
+  capacity?: number;
+  /** OSM's `covered`: anything but "no" (partial, …) is true. */
+  covered?: boolean;
+  /** OSM's `indoor`: anything but "no" (room, area, …) is true. */
+  indoor?: boolean;
+  operator?: string;
   osmNodeId?: number;
   osmWayId?: number;
+};
+
+/** A bike route in the tiles (its id is `osmFeatureId("relation", <its relation id>)`). */
+export type CyclingRouteProperties = {
+  /** OSM's `network`: lcn, rcn, ncn or icn. */
+  network?: string;
 };
 
 /** A bike parking point before tiling. */
@@ -56,6 +82,7 @@ export interface BikeParking {
 const DETAIL_KEYS = [
   "name",
   "surface",
+  "operator",
   "routes",
 ] as const satisfies (keyof CyclingWayProperties)[];
 
@@ -129,16 +156,27 @@ function groupLengths(
   return chains.map((_, i) => total.get(find(i))!);
 }
 
-/** Every feature of the cycling tiles, for tippecanoe. */
+/** The chains the tiles carry from CYCLING_DETAIL_ZOOM: ways joined where every attribute is the same. */
+export function detailChains(
+  ways: readonly ClassifiedWay<CyclingWayProperties>[],
+): Chain<CyclingWayProperties>[] {
+  return joinChains(ways, keyOf, isDirected);
+}
+
+/** A chain's first way by id: its tile feature id's (and `?select=osm-way:<id>`'s) way. */
+export const chainWayId = (c: Chain<unknown>) => Math.min(...c.wayIds);
+
+/** Every feature of the cycling tiles, for tippecanoe. `chains` are `ways`' detail chains. */
 export function* cyclingTileFeatures(
   ways: readonly ClassifiedWay<CyclingWayProperties>[],
   parking: readonly BikeParking[],
+  chains: readonly Chain<CyclingWayProperties>[] = detailChains(ways),
 ): Generator<TileFeature> {
   // Detail: whole chains with every attribute, and an id.
-  for (const c of joinChains(ways, keyOf, isDirected))
+  for (const c of chains)
     yield {
       type: "Feature",
-      id: osmFeatureId("way", Math.min(...c.wayIds)),
+      id: osmFeatureId("way", chainWayId(c)),
       properties: c.attrs,
       geometry: { type: "LineString", coordinates: c.coords },
       tippecanoe: { layer: CYCLING_LAYER, minzoom: CYCLING_DETAIL_ZOOM },
@@ -149,10 +187,10 @@ export function* cyclingTileFeatures(
     for (const k of DETAIL_KEYS) delete attrs[k];
     return { ...w, attrs: attrs as WayClass };
   });
-  const chains = joinChains(drawn, keyOf, isDirected);
-  const px = chains.map((c) => pixelLength(c.coords));
-  const groupPx = groupLengths(chains, px);
-  for (const [i, c] of chains.entries()) {
+  const overview = joinChains(drawn, keyOf, isDirected);
+  const px = overview.map((c) => pixelLength(c.coords));
+  const groupPx = groupLengths(overview, px);
+  for (const [i, c] of overview.entries()) {
     const z = Math.max(
       CYCLING_MIN_ZOOM,
       Math.ceil(Math.log2(MIN_PX / groupPx[i]!)),
@@ -180,4 +218,30 @@ export function* cyclingTileFeatures(
       geometry: { type: "Point", coordinates: p.lonLat },
       tippecanoe: { layer: CYCLING_LAYER, minzoom: PARKING_MIN_ZOOM },
     };
+}
+
+/**
+ * The bike routes' features, for tippecanoe: each route's lines (its ways and its subroutes'), from
+ * CYCLING_MIN_ZOOM to CYCLING_ROUTES_MAX_ZOOM. A route with none of its ways in the area has none.
+ */
+export function* cyclingRouteTileFeatures(
+  network: Pick<CyclingNetwork, "routes" | "routeLines">,
+): Generator<TileFeature> {
+  for (const [id, r] of network.routes) {
+    const lines = network.routeLines(id);
+    if (!lines.length) continue;
+    const properties: CyclingRouteProperties =
+      r.network === undefined ? {} : { network: r.network };
+    yield {
+      type: "Feature",
+      id: osmFeatureId("relation", id),
+      properties,
+      geometry: { type: "MultiLineString", coordinates: lines },
+      tippecanoe: {
+        layer: CYCLING_ROUTES_LAYER,
+        minzoom: CYCLING_MIN_ZOOM,
+        maxzoom: CYCLING_ROUTES_MAX_ZOOM,
+      },
+    };
+  }
 }

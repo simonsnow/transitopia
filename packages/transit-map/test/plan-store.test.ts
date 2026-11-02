@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, parseFeed } from "@transitopia/transit-core/config.ts";
 import { serviceDate } from "@transitopia/transit-core/time.ts";
 import kinematics from "@transitopia/config/defaults/kinematics.json";
-import victoria from "@transitopia/config/feeds/bc-transit-vancouver-island/feed.json";
+import victoria from "@transitopia/config/feeds/bc-transit-victoria/feed.json";
 import { publishPlan } from "@transitopia/transit-core/plan/published.ts";
 import type { ServicePlan } from "@transitopia/transit-core/plan/types.ts";
 import { PlanStore } from "../src/plans.ts";
@@ -20,7 +20,7 @@ const manifest = (generatedAt: string) => ({
       version: "v1",
       start: "20260901",
       end: "20261231",
-      path: "data/feeds/bc-transit-vancouver-island/v1/plan.json",
+      path: "data/feeds/bc-transit-victoria/v1/plan.json",
       builtAt: "2026-10-18T10:00:00.000Z",
     },
   ],
@@ -52,12 +52,7 @@ async function store(
         : new Response("", { status: 404 });
     }),
   );
-  const s = await PlanStore.load(
-    "https://data.example/",
-    undefined,
-    "vancouver-island",
-    config,
-  );
+  const s = await PlanStore.load("https://data.example/", undefined, config);
   urls.length = 0;
   return { s, urls };
 }
@@ -67,13 +62,13 @@ describe("PlanStore data URLs", () => {
 
   it("names the build in every published file's URL", async () => {
     const { s, urls } = await store("2026-10-18T17:33:18.203Z");
-    expect(s.dataUrl("data/regions/x/infra/tracks.geojson")).toBe(
-      "https://data.example/data/regions/x/infra/tracks.geojson?v=2026-10-18T17%3A33%3A18.203Z",
+    expect(s.dataUrl("data/networks/x/infra/tracks.geojson")).toBe(
+      "https://data.example/data/networks/x/infra/tracks.geojson?v=2026-10-18T17%3A33%3A18.203Z",
     );
     vi.spyOn(console, "error").mockImplementation(() => {});
     s.planFor(serviceDate("20261021"));
     expect(urls).toEqual([
-      "https://data.example/data/feeds/bc-transit-vancouver-island/v1/plan.json?v=2026-10-18T17%3A33%3A18.203Z",
+      "https://data.example/data/feeds/bc-transit-victoria/v1/plan.json?v=2026-10-18T17%3A33%3A18.203Z",
     ]);
   });
 
@@ -111,7 +106,7 @@ describe("PlanStore data URLs", () => {
     const { s } = await store(
       "2026-10-19T16:49:39.522Z",
       "2026-10-20T00:22:20.721Z",
-      { "data/feeds/bc-transit-vancouver-island/v1/plan.json": { schema: 1 } },
+      { "data/feeds/bc-transit-victoria/v1/plan.json": { schema: 1 } },
     );
     vi.spyOn(console, "error").mockImplementation(() => {});
     let changed = 0;
@@ -142,7 +137,7 @@ describe("PlanStore loading plans by parts", () => {
   });
   const plan: ServicePlan = {
     schema: 1,
-    feed: "bc-transit-vancouver-island",
+    feed: "bc-transit-victoria",
     feedVersion: "v1",
     feedStart: serviceDate("20260901"),
     feedEnd: serviceDate("20261231"),
@@ -157,6 +152,7 @@ describe("PlanStore loading plans by parts", () => {
         brand: false,
         color: "#0a0",
         textColor: "#fff",
+        feed: "bc-transit-victoria",
         gtfsRouteId: "95",
       },
     ],
@@ -211,7 +207,7 @@ describe("PlanStore loading plans by parts", () => {
     const { core, files } = publishPlan(plan);
     // build-plan-tiles names them.
     core.files.tiles = "../lines/0123abcd.pmtiles";
-    const dir = "data/feeds/bc-transit-vancouver-island/v1/";
+    const dir = "data/feeds/bc-transit-victoria/v1/";
     const served = new Map<string, unknown>([
       [`${dir}plan.json`, core],
       ...[...files].map(([k, v]): [string, unknown] => [dir + k, v]),
@@ -232,12 +228,7 @@ describe("PlanStore loading plans by parts", () => {
           : new Response("", { status: 404 });
       }),
     );
-    const s = await PlanStore.load(
-      "https://data.example/",
-      undefined,
-      "vancouver-island",
-      config,
-    );
+    const s = await PlanStore.load("https://data.example/", undefined, config);
     return { s, urls };
   }
 

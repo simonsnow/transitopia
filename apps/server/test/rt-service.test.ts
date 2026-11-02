@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import GtfsRealtimeBindings from "gtfs-realtime-bindings";
 import { notModified, RtService } from "../src/rt/service.ts";
 import type {
   LiveChangesSection,
-  LiveTransitResponse,
   LiveVehiclesSection,
 } from "@transitopia/transit-core/rt/live.ts";
 import type { CompactSnapshot } from "@transitopia/transit-core/rt/types.ts";
+import type { LiveResponse } from "@transitopia/transit-core/rt/live.ts";
 import { health, type AppDeps } from "../src/app.ts";
 
 const { FeedMessage } = GtfsRealtimeBindings.transit_realtime;
@@ -100,10 +100,8 @@ describe("RtService", () => {
       log: () => {},
       apiKey: "test-key",
       dispatch: false,
-      disruptionsDir: dir,
-      regionId: "test-region",
     });
-    await service.start(0);
+    await service.start();
     // Let the first positions + trip-updates + alerts polls complete.
     await vi.waitFor(() => expect(latest(service!)).not.toBeNull());
     await vi.waitFor(() => expect(upstream.mock.calls.length).toBe(3));
@@ -111,10 +109,7 @@ describe("RtService", () => {
     const before = upstream.mock.calls.length;
     const responses = await Promise.all(
       Array.from({ length: 100 }, () =>
-        service!.handle(
-          "/regions/test-region/live/transit",
-          new URLSearchParams(),
-        ),
+        service!.handle("/feeds/translink/live", new URLSearchParams()),
       ),
     );
     expect(upstream.mock.calls.length).toBe(before);
@@ -128,7 +123,7 @@ describe("RtService", () => {
     }
   });
 
-  it("serves every live source in one response per region, with pointers to immutable files", async () => {
+  it("serves a feed's live sources in one response, with pointers to immutable files", async () => {
     dir = await mkdtemp(join(tmpdir(), "rt-test-"));
     const upstream = vi.fn(async (url: string | URL) =>
       feedResponse(
@@ -143,39 +138,41 @@ describe("RtService", () => {
       apiKey: "test-key",
       aisApiKey: null,
       dispatch: false,
-      disruptionsDir: dir,
-      regionId: "test-region",
     });
-    await service.start(0);
+    await service.start();
     await vi.waitFor(() => expect(upstream.mock.calls.length).toBe(3));
     await vi.waitFor(() => expect(latest(service!)).not.toBeNull());
 
     const get = (path: string) => service!.handle(path, new URLSearchParams());
-    const r = await get("/regions/test-region/live/transit");
+    const r = await get("/feeds/translink/live");
     expect(r.status).toBe(200);
     expect(r.headers["Access-Control-Allow-Origin"]).toBe("*");
     expect(r.headers["Cache-Control"]).toMatch(/^public, max-age=\d+$/);
     expect(String(r.body)).not.toContain("test-key");
-    const body = JSON.parse(String(r.body)) as LiveTransitResponse;
+    const body = JSON.parse(String(r.body)) as LiveResponse;
     expect(body.schema).toBe(1);
     // The next positions poll, at the latest.
     expect(body.nextAt).toBeGreaterThan(Date.now());
-    expect(body.sources["translink/vehicles"]).toMatchObject({
+    expect(body.sources["vehicles"]).toMatchObject({
       kind: "vehicles",
       status: "ok",
       encoding: "rt-snapshot/1",
     });
-    expect(body.sources["translink/ais"]).toMatchObject({
+    expect(body.sources["ais"]).toMatchObject({
       kind: "ais",
       status: "unavailable",
       routes: ["seabus"],
       route: "seabus",
       data: [],
     });
-    expect(body.sources["dispatch"]).toBeUndefined();
+    expect(Object.keys(body.sources).sort()).toEqual([
+      "ais",
+      "changes",
+      "vehicles",
+    ]);
 
     // Unchanged data, the same body and ETag: a revalidation is a 304.
-    const again = await get("/regions/test-region/live/transit");
+    const again = await get("/feeds/translink/live");
     expect(again.body).toBe(r.body);
     const etag = r.headers["ETag"]!;
     expect(etag).toMatch(/^W\/"[0-9a-f]+"$/);
@@ -185,40 +182,33 @@ describe("RtService", () => {
     expect(notModified(undefined, etag)).toBe(false);
 
     // Service changes: today's and yesterday's current versions, each at an immutable URL.
-    const changes = body.sources["translink/changes"];
+    const changes = body.sources["changes"];
     if (changes?.kind !== "changes") throw new Error("no changes section");
     expect(Object.keys(changes.versions)).toHaveLength(2);
     for (const [date, { version, path }] of Object.entries(changes.versions)) {
-      expect(path).toBe(
-        `regions/test-region/days/${date}/translink/changes/${version}.json`,
-      );
+      expect(path).toBe(`feeds/translink/days/${date}/changes/${version}.json`);
       const file = await get(`/${path}`);
       expect(file.status).toBe(200);
       expect(file.headers["Cache-Control"]).toMatch(/immutable/);
       expect(JSON.parse(String(file.body)).date).toBe(date);
-      const current = await get(
-        `/regions/test-region/days/${date}/translink/changes`,
-      );
+      const current = await get(`/feeds/translink/days/${date}/changes`);
       expect(current.body).toBe(file.body);
     }
     const [date] = Object.keys(changes.versions);
     expect(
-      (
-        await get(
-          `/regions/test-region/days/${date}/translink/changes/000000000000.json`,
-        )
-      ).status,
+      (await get(`/feeds/translink/days/${date}/changes/000000000000.json`))
+        .status,
     ).toBe(404);
 
     // The SeaBus day file says why there are no fixes.
-    const ais = await get(`/regions/test-region/days/${date}/translink/ais`);
+    const ais = await get(`/feeds/translink/days/${date}/ais`);
     expect(JSON.parse(String(ais.body))).toMatchObject({
       status: "unavailable",
       fixes: [],
     });
-    expect((await get("/regions/elsewhere/live/transit")).status).toBe(404);
-    expect((await get("/regions/test-region/nothing")).status).toBe(404);
-    expect(upstream.mock.calls.length).toBe(3);
+    expect((await get("/feeds/elsewhere/live")).status).toBe(404);
+    expect((await get("/feeds/translink/nothing")).status).toBe(404);
+    expect((await get("/feeds/translink/days/2026101/ais")).status).toBe(404);
   });
 
   it("serves legacy region/feed aliases with old source and route keys", async () => {
@@ -285,13 +275,13 @@ describe("RtService", () => {
       ],
     };
     vi.spyOn(poller, "liveSections").mockResolvedValue({
-      "translink/vehicles": {
+      vehicles: {
         kind: "vehicles",
         encoding: "rt-snapshot/1",
         status: "ok",
         data: snapshot,
       } satisfies LiveVehiclesSection,
-      "translink/changes": {
+      changes: {
         kind: "changes",
         versions: {
           [date]: {
@@ -333,7 +323,7 @@ describe("RtService", () => {
       "/regions/greater-victoria/live/transit",
       new URLSearchParams(),
     );
-    const body = JSON.parse(String(live.body)) as LiveTransitResponse;
+    const body = JSON.parse(String(live.body)) as LiveResponse;
     const vehicles = body.sources["bc-transit-victoria/vehicles"];
     if (vehicles?.kind !== "vehicles") throw new Error("no vehicles section");
     expect(vehicles.data?.v).toHaveLength(1);
@@ -359,7 +349,7 @@ describe("RtService", () => {
     ]);
   });
 
-  it("records each request in a ledger and resumes the schedule after a restart", async () => {
+  it("keeps an in-memory request ledger and starts fresh after a restart without a store", async () => {
     dir = await mkdtemp(join(tmpdir(), "rt-test-"));
     const upstream = vi.fn(
       async () =>
@@ -377,29 +367,16 @@ describe("RtService", () => {
       disruptionsDir: dir,
     };
     service = new RtService(opts);
-    await service.start(0);
+    await service.start();
     await vi.waitFor(() => expect(upstream.mock.calls.length).toBe(3));
-    await vi.waitFor(async () =>
-      expect(
-        JSON.parse(
-          await readFile(join(dir!, "translink", "requests.json"), "utf8"),
-        ).requests,
-      ).toHaveLength(3),
-    );
+    expect(service.pollers.get("translink")!.budgetStatus().used24h).toBe(3);
     await service.stop();
 
-    // A restart right away polls nothing until each feed's interval has passed.
+    // Without a database store, a new process has no persisted ledger and polls immediately.
     service = new RtService(opts);
-    await service.start(0);
-    await new Promise((r) => setTimeout(r, 200));
-    expect(upstream.mock.calls.length).toBe(3);
-    const status = JSON.parse(
-      String((await service.handle("/rt/status", new URLSearchParams())).body),
-    );
-    expect(status.providers.translink.budget.used24h).toBe(3);
-    expect(
-      status.providers.translink.budget.nextPollInS.positions,
-    ).toBeGreaterThan(30);
+    await service.start();
+    await vi.waitFor(() => expect(upstream.mock.calls.length).toBe(6));
+    expect(service.pollers.get("translink")!.budgetStatus().used24h).toBe(3);
   });
 
   it("keeps one pending timer per feed however long it polls", async () => {
@@ -414,60 +391,24 @@ describe("RtService", () => {
         log: () => {},
         apiKey: "test-key",
         dispatch: false,
-        disruptionsDir: dir,
       });
-      await service.start(0);
-      // An hour of polling, a minute at a time (each poll awaits real file I/O before it schedules
-      // the next): every feed polls again and again at any time of day.
+      await service.start();
+      // An hour of polling, a minute at a time: every feed polls again and again at any time of day.
+      // Each poll awaits real file I/O before it schedules the next, which can take many event-loop
+      // turns under load, so wait for the polls under way (private) before moving the clock on.
+      const poller = service.pollers.get("translink")!;
       for (let m = 0; m < 60; m++) {
         await vi.advanceTimersByTimeAsync(60_000);
-        await new Promise((r) => setImmediate(r));
+        await Promise.allSettled(poller["inFlight"]);
       }
       expect(upstream.mock.calls.length).toBeGreaterThan(9);
       // Private: the handles the service holds (it once kept every poll's, forever).
-      expect(
-        Object.keys(service.pollers.get("translink")!["timers"]),
-      ).toHaveLength(3);
+      expect(Object.keys(poller["timers"])).toHaveLength(3);
     } finally {
       vi.useRealTimers();
-      // Including the last poll's ledger write, before the directory goes.
+      // Including the last poll's writes, before the directory goes.
       await service?.stop();
     }
-  });
-
-  it("stops polling at the daily cap", async () => {
-    dir = await mkdtemp(join(tmpdir(), "rt-test-"));
-    const hourAgo = Date.now() - 3_600_000;
-    const requests = Array.from({ length: 1000 }, (_, i) => [
-      hourAgo + i,
-      "positions",
-    ]);
-    await mkdir(join(dir, "translink"));
-    await writeFile(
-      join(dir, "translink", "requests.json"),
-      JSON.stringify({ requests }),
-    );
-    const upstream = vi.fn();
-    vi.stubGlobal("fetch", upstream);
-    service = new RtService({
-      historyDir: dir,
-      record: false,
-      log: () => {},
-      apiKey: "test-key",
-      dispatch: false,
-      disruptionsDir: dir,
-    });
-    await service.start(0);
-    await vi.waitFor(async () =>
-      expect(
-        JSON.parse(
-          String(
-            (await service!.handle("/rt/status", new URLSearchParams())).body,
-          ),
-        ).providers.translink.budget.capped,
-      ).toBe(true),
-    );
-    expect(upstream).not.toHaveBeenCalled();
   });
 
   it("reports no key without calling upstream", async () => {
@@ -480,25 +421,27 @@ describe("RtService", () => {
       log: () => {},
       apiKey: null,
       dispatch: false,
-      regionId: "test-region",
     });
-    await service.start(0);
+    await service.start();
     const r = await service.handle(
-      "/regions/test-region/live/transit",
+      "/feeds/translink/live",
       new URLSearchParams(),
     );
-    const body = JSON.parse(String(r.body)) as LiveTransitResponse;
-    expect(body.sources["translink/vehicles"]).toMatchObject({
+    const body = JSON.parse(String(r.body)) as LiveResponse;
+    expect(body.sources["vehicles"]).toMatchObject({
       status: "unavailable",
       data: null,
       error: expect.stringMatching(/API key/),
     });
     expect(upstream).not.toHaveBeenCalled();
-    // Live dispatch is off here: no section, and its endpoints say so.
-    expect(body.sources["dispatch"]).toBeUndefined();
-    expect(
-      (await service.handle("/rt/dispatch", new URLSearchParams())).status,
-    ).toBe(404);
+    // Live dispatch is off here: its endpoints say so.
+    for (const path of [
+      "/networks/skytrain/dispatch",
+      "/networks/skytrain/live/dispatch",
+    ])
+      expect((await service.handle(path, new URLSearchParams())).status).toBe(
+        404,
+      );
     // The feed endpoints need a feed that has real time.
     const coverage = (q: Record<string, string>) =>
       service!.handle("/rt/coverage", new URLSearchParams(q));
@@ -532,9 +475,8 @@ describe("RtService", () => {
       log: () => {},
       apiKey: "test-key",
       dispatch: false,
-      disruptionsDir: dir,
     });
-    await service.start(0);
+    await service.start();
     const status = async () =>
       JSON.parse(
         String(
@@ -571,40 +513,6 @@ describe("RtService", () => {
     );
   });
 
-  it("passes health after a restart until trip updates are due", async () => {
-    dir = await mkdtemp(join(tmpdir(), "rt-test-"));
-    // The previous leader polled everything 10 s ago, so this one continues the schedule from there.
-    const before = Date.now() - 10_000;
-    await mkdir(join(dir, "translink"));
-    await writeFile(
-      join(dir, "translink", "requests.json"),
-      JSON.stringify({
-        requests: [
-          [before, "tripUpdates"],
-          [before, "positions"],
-          [before, "alerts"],
-        ],
-      }),
-    );
-    const upstream = vi.fn();
-    vi.stubGlobal("fetch", upstream);
-    service = new RtService({
-      historyDir: dir,
-      record: false,
-      log: () => {},
-      apiKey: "test-key",
-      dispatch: false,
-      disruptionsDir: dir,
-    });
-    await service.start(0);
-    const h = await health({ service } as unknown as AppDeps);
-    expect(upstream).not.toHaveBeenCalled();
-    expect(h.checks["translink/tripUpdates"]?.ok).toBe(true);
-    expect(h.checks["translink/tripUpdates"]?.detail).toMatch(
-      /no successful poll since polling started \d+ s ago \(limit \d+ s\); next poll in \d+ s/,
-    );
-  });
-
   it("fails health when trip updates succeed but give no delays for the buses for a while", async () => {
     dir = await mkdtemp(join(tmpdir(), "rt-test-"));
     // Two buses first (too few to judge, as at the ends of service), then twelve.
@@ -623,9 +531,8 @@ describe("RtService", () => {
       log: () => {},
       apiKey: "test-key",
       dispatch: false,
-      disruptionsDir: dir,
     });
-    await service.start(0);
+    await service.start();
     // Positions polled again once trip updates have been read (the first may come back before them).
     await vi.waitFor(async () => {
       const st = JSON.parse(
@@ -688,9 +595,8 @@ describe("RtService", () => {
       log: (m: string) => logs.push(m),
       apiKey: "test-key",
       dispatch: false,
-      disruptionsDir: dir,
     });
-    await service.start(0);
+    await service.start();
     await vi.waitFor(() => expect(latest(service!)).not.toBeNull());
     // The first trip-updates poll may have come before any positions: poll again now.
     const internals = service.pollers.get("translink") as unknown as {

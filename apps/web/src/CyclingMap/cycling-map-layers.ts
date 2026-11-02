@@ -4,7 +4,13 @@
 // Design license: CC-BY 4.0 https://creativecommons.org/licenses/by/4.0/
 
 import type { ExpressionSpecification, LayerSpecification } from "maplibre-gl";
-import { CYCLING_LAYER } from "@transitopia/cycling-core/tiles.ts";
+import {
+  CYCLING_LAYER,
+  CYCLING_ROUTES_LAYER,
+  CYCLING_ROUTES_MAX_ZOOM,
+  osmFeatureId,
+} from "@transitopia/cycling-core/tiles.ts";
+import type { Comfort } from "@transitopia/cycling-core/classify.ts";
 import type { Theme } from "@transitopia/map-style/basemap.ts";
 import { FONTS } from "@transitopia/map-style/basemap.ts";
 import {
@@ -14,6 +20,17 @@ import {
 
 // Which map "source" file (which .pmtiles file) the cycling data layers are found in
 export const mapSource = "transitopia-cycling";
+/**
+ * The same tiles again for bike routes, which they hold only to CYCLING_ROUTES_MAX_ZOOM: a source of
+ * its own, so MapLibre overzooms them beyond it (packages/cycling-core/README.md#tiles).
+ */
+export const routesSource = "transitopia-cycling-routes";
+
+export const routesSourceSpec = (url: string) =>
+  ({ type: "vector", url, maxzoom: CYCLING_ROUTES_MAX_ZOOM }) as const;
+
+/** Ferries, drawn just over the basemap's water, under its bridges (CyclingMap.tsx); the other layers go over the basemap. */
+export const FERRY_LAYER = "cycling_ferry";
 
 /** Layers with cycling paths, as opposed to other things like bike rack locations */
 export const pathLayerIds = [
@@ -22,33 +39,37 @@ export const pathLayerIds = [
   "cycling_path_3",
   "cycling_path_4",
   "cycling_path_construction",
+  FERRY_LAYER,
 ];
 export const otherLayerIds = ["bike_parking_point"];
 
 /**
- * What the cycling layers panel shows (CyclingLayers.tsx). The categories follow the tiles' comfort
- * levels (packages/cycling-core/src/classify.ts): protected = separated
- * tracks and paths (comfort 4, or 3 when shared with pedestrians), local = traffic-calmed shared
- * streets (comfort 3 on the road), painted = lanes on the roadway, including shared lanes on busy
- * streets (comfort 1–2). "All ages & abilities only" hides comfort 1–2 whatever `painted` says.
+ * What the cycling layers panel shows (CyclingLayers.tsx): paths at each of the tiles' comfort
+ * levels (`comfort4` … `comfort1`: packages/cycling-core/src/classify.ts, named in comfort.ts), and
+ * the rest. Ferries that take bikes (class "ferry", no comfort) have a switch of their own.
  */
 export interface CyclingShow {
-  protected: boolean;
-  painted: boolean;
-  local: boolean;
+  comfort4: boolean;
+  comfort3: boolean;
+  comfort2: boolean;
+  comfort1: boolean;
   parking: boolean;
   construction: boolean;
-  aaaOnly: boolean;
+  ferries: boolean;
 }
 
 export const DEFAULT_SHOW: CyclingShow = {
-  protected: true,
-  painted: true,
-  local: true,
+  comfort4: true,
+  comfort3: true,
+  comfort2: true,
+  comfort1: true,
   parking: true,
   construction: true,
-  aaaOnly: false,
+  ferries: true,
 };
+
+/** The switch for paths at a comfort level. */
+export const comfortKey = (c: Comfort) => `comfort${c}` as const;
 
 const comfort: ExpressionSpecification = ["to-number", ["get", "comfort"]];
 const isLine: ExpressionSpecification = ["==", ["geometry-type"], "LineString"];
@@ -58,19 +79,10 @@ const notConstruction: ExpressionSpecification = [
   true,
 ];
 
-/** Paths (not under construction) in a category the panel shows. */
+/** Paths (not under construction) at a comfort level the panel shows. */
 function shownPaths(show: CyclingShow): ExpressionSpecification {
-  const any: ExpressionSpecification[] = [];
-  if (show.protected)
-    any.push([
-      "any",
-      ["==", comfort, 4],
-      ["all", ["==", comfort, 3], ["==", ["get", "class"], "track"]],
-    ]);
-  if (show.local)
-    any.push(["all", ["==", comfort, 3], ["!=", ["get", "class"], "track"]]);
-  if (show.painted && !show.aaaOnly) any.push(["<=", comfort, 2]);
-  return ["any", ...any];
+  const levels = ([4, 3, 2, 1] as const).filter((c) => show[comfortKey(c)]);
+  return ["in", comfort, ["literal", levels]];
 }
 
 /** Each layer's filter for what the panel shows. */
@@ -91,6 +103,12 @@ export function cyclingFilters(
     ["==", ["get", "oneway"], -1],
   ];
   return {
+    [FERRY_LAYER]: [
+      "all",
+      isLine,
+      ["==", ["get", "class"], "ferry"],
+      show.ferries,
+    ],
     cycling_path_construction: [
       "all",
       isLine,
@@ -135,6 +153,9 @@ export function cyclingFilters(
   };
 }
 
+/** Selected and hovered paths, and the selected bike route. */
+const HIGHLIGHT = "rgba(200, 100, 100, 1)";
+
 /**
  * Helper: the resulting color should normally be 'color',
  * but make it salmon colored when hovered or selected.
@@ -143,11 +164,48 @@ const colorWithHoverAndSelectionStates = (color: string) =>
   [
     "case",
     ["boolean", ["feature-state", "selected"], false],
-    "rgba(200, 100, 100, 1)",
+    HIGHLIGHT,
     ["boolean", ["feature-state", "hover"], false],
-    "rgba(200, 100, 100, 1)",
+    HIGHLIGHT,
     color,
   ] satisfies ExpressionSpecification;
+
+/** The selected bike route's highlight: drawn under the paths, its ways and its subroutes' whole. */
+export const ROUTE_HIGHLIGHT_LAYER = "cycling_route_selected";
+
+/**
+ * The highlight's layer, showing the route with this relation id (none: hidden, so MapLibre
+ * doesn't load the routes' tiles). Add it before the paths' layers.
+ */
+export function routeHighlightLayer(
+  relation: number | undefined,
+): LayerSpecification {
+  return {
+    id: ROUTE_HIGHLIGHT_LAYER,
+    type: "line",
+    source: routesSource,
+    "source-layer": CYCLING_ROUTES_LAYER,
+    layout: { ...defaultLineLayout, ...routeHighlightLayout(relation) },
+    filter: routeHighlightFilter(relation),
+    paint: {
+      "line-color": HIGHLIGHT,
+      "line-opacity": 0.7,
+      "line-width": interpolateZoom({ z6: 3, z10: 6, z16: 18 }),
+    },
+  };
+}
+
+export const routeHighlightFilter = (
+  relation: number | undefined,
+): ExpressionSpecification => [
+  "==",
+  ["id"],
+  relation === undefined ? -1 : osmFeatureId("relation", relation),
+];
+
+export const routeHighlightLayout = (relation: number | undefined) => ({
+  visibility: relation === undefined ? ("none" as const) : ("visible" as const),
+});
 
 /** Colours per theme. Light is the original design; dark keeps the same meaning on a dark basemap. */
 const PALETTE = {
@@ -156,6 +214,7 @@ const PALETTE = {
     pathLeastComfortable: "rgba(26, 50, 35, 1)",
     pathInner: "rgba(255, 255, 255, 0.6)",
     construction: "rgba(226, 109, 35, 1)",
+    ferry: "rgba(74, 125, 178, 1)",
     name: "rgba(24, 79, 19, 1)",
     nameHalo: "rgba(231, 231, 131, 0.72)",
     parkingFill: "rgba(231, 231, 131, 0.72)",
@@ -165,6 +224,7 @@ const PALETTE = {
     pathLeastComfortable: "rgba(167, 201, 174, 1)",
     pathInner: "rgba(21, 24, 28, 0.7)",
     construction: "rgba(240, 138, 60, 1)",
+    ferry: "rgba(127, 169, 212, 1)",
     name: "rgba(184, 240, 194, 1)",
     nameHalo: "rgba(21, 24, 28, 0.85)",
     parkingFill: "rgba(70, 80, 40, 0.9)",
@@ -178,6 +238,23 @@ export function cyclingLayers(
   const c = PALETTE[theme];
   const filters = cyclingFilters(show);
   const layers: LayerSpecification[] = [
+    {
+      // Long dashes, unlike the paths' short ones: a crossing, not a facility.
+      id: FERRY_LAYER,
+      type: "line",
+      source: mapSource,
+      "source-layer": CYCLING_LAYER,
+      layout: {
+        "line-cap": "butt",
+        "line-join": "round",
+        visibility: "visible",
+      },
+      paint: {
+        "line-color": colorWithHoverAndSelectionStates(c.ferry),
+        "line-width": interpolateZoom({ z6: 1, z10: 1.5, z16: 3 }),
+        "line-dasharray": [4, 3],
+      },
+    },
     {
       id: "cycling_path_construction",
       type: "line",

@@ -3,13 +3,27 @@
 // the confirmed corrections exported from the database, then archives new GTFS feeds, reconciles
 // them into the feature registry (docs/DESIGN.md#feature-ids) and publishes
 // var/public/data for data.transitopia.org. Building here keeps the live dispatcher's base plans
-// identical to what browsers load: a dispatch patch only fits the build it was made from.
+// identical to what browsers load: a dispatch patch only fits the build it was made from. The
+// cycling map's files are built and published with it (packages/cycling-core/README.md#published-files),
+// and its bike routes loaded into the database (apps/server/README.md#cycling-routes).
 
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
-import { CORRECTIONS_EXPORT_DIR, ROOT } from "@transitopia/data/paths.ts";
+import {
+  CORRECTIONS_EXPORT_DIR,
+  ROOT,
+  cyclingPaths,
+  readCyclingConfig,
+  readJson,
+} from "@transitopia/data/paths.ts";
+import {
+  CYCLING_INDEX,
+  cyclingDataPath,
+  type CyclingIndex,
+} from "@transitopia/cycling-core/published.ts";
+import type { CyclingRoutesFile } from "@transitopia/cycling-core/routes.ts";
+import { loadCyclingRoutes } from "../features/cycling-routes.ts";
 import type { FeedInfo } from "@transitopia/transit-core/config.ts";
 import { archivedFeeds } from "@transitopia/data/gtfs-day.ts";
 import type { Db } from "@transitopia/db/connect.ts";
@@ -38,63 +52,65 @@ export interface DataBuildResult {
 }
 
 export async function buildData(opts: {
-  db: Db | undefined;
+  db: Db;
   feeds: FeedInfo[];
-  repo: CorrectionsRepo | undefined;
+  repo: CorrectionsRepo;
   env: ServerEnv;
   log: (msg: string) => void;
 }): Promise<DataBuildResult> {
   const { db, repo, env, log } = opts;
   // The server writes the places files itself, after reconciling.
   const childEnv: NodeJS.ProcessEnv = { TRANSITOPIA_SKIP_PLACES: "1" };
-  if (repo) {
-    // The pipelines read a region's corrections from <dir>/<region>/ (regionPaths).
-    const n = await repo.exportFiles(
-      join(CORRECTIONS_EXPORT_DIR, repo.regionId),
-    );
-    log(
-      `exported ${n.observationSets} observation sets and ${n.disruptions} disruptions for the build`,
-    );
-    childEnv.TRANSITOPIA_CORRECTIONS_DIR = CORRECTIONS_EXPORT_DIR;
-  }
+  // The pipelines read them from a directory laid out like config/ (correctionPaths).
+  const n = await repo.exportFiles(CORRECTIONS_EXPORT_DIR);
+  log(
+    `exported ${n.observationSets} observation sets and ${n.disruptions} disruptions for the build`,
+  );
+  childEnv.TRANSITOPIA_CORRECTIONS_DIR = CORRECTIONS_EXPORT_DIR;
   await run(process.execPath, ["--import", "tsx", "pipelines/data.ts"], {
     cwd: ROOT,
     env: childEnv,
     log: (l) => log(`data: ${l}`),
   });
   const newFeeds: string[] = [];
-  if (db)
-    for (const f of opts.feeds)
-      newFeeds.push(...(await recordFeeds(db, f.id, env.archiveRemote, log)));
+  for (const f of opts.feeds)
+    newFeeds.push(...(await recordFeeds(db, f.id, env.archiveRemote, log)));
   // Feature IDs for the new versions (and any not yet reconciled), apps/server/README.md#feature-reconciliation.
   const reconciled: string[] = [];
   let reconcileError: string | undefined;
-  if (db)
-    try {
-      for (const r of await reconcileFeeds({
-        db,
-        feeds: opts.feeds,
-        settings: reconcileConfig,
-        archiveRemote: env.archiveRemote,
-        log,
-      }))
-        reconciled.push(`${r.feed}/${r.version}`);
-    } catch (e) {
-      reconcileError = (e as Error).message;
-      log(`feature reconciliation failed: ${reconcileError}`);
-    }
+  try {
+    for (const r of await reconcileFeeds({
+      db,
+      feeds: opts.feeds,
+      settings: reconcileConfig,
+      archiveRemote: env.archiveRemote,
+      log,
+    }))
+      reconciled.push(`${r.feed}/${r.version}`);
+  } catch (e) {
+    reconcileError = (e as Error).message;
+    log(`feature reconciliation failed: ${reconcileError}`);
+  }
+  // Bike routes and their IDs, before the export so it has them.
+  try {
+    await loadRoutes(db, log);
+  } catch (e) {
+    log(`loading bike routes failed: ${(e as Error).message}`);
+  }
   // Places files and the public export, from the registry (docs/DESIGN.md#published-features).
-  if (db)
-    try {
-      await writeFeatureData(db, opts.feeds, log);
-    } catch (e) {
-      log(`writing places files failed: ${(e as Error).message}`);
-    }
+  try {
+    await writeFeatureData(db, opts.feeds, log);
+  } catch (e) {
+    log(`writing places files failed: ${(e as Error).message}`);
+  }
   let published = false;
   if (env.dataPublishRemote) {
     await publishData(env.dataPublishRemote, { log });
     published = true;
     log(`published transit data to ${env.dataPublishRemote}`);
+    await pruneCycling(env.dataPublishRemote).catch((e: unknown) =>
+      log(`removing old cycling files failed: ${(e as Error).message}`),
+    );
   }
   // The overview replaces the day before's: the tile worker serves its tiles for a day.
   let overviewPublished = false;
@@ -115,6 +131,45 @@ export async function buildData(opts: {
     published,
     overviewPublished,
   };
+}
+
+/** Load the latest cycling build's bike routes into the database, if there is one. */
+export async function loadRoutes(
+  db: Db,
+  log: (msg: string) => void,
+): Promise<void> {
+  const { area } = await readCyclingConfig();
+  const file = await readJson<CyclingRoutesFile>(
+    cyclingPaths(area.id).routes,
+  ).catch(() => undefined);
+  if (!file) return;
+  const r = await loadCyclingRoutes(db, file);
+  log(
+    `bike routes: ${r.routes} for ${area.id}${r.loaded ? " loaded" : ""}; ${r.minted} minted, ${r.renamed} renamed, ${r.reactivated} reactivated, ${r.retired} retired`,
+  );
+}
+
+/** Days a published cycling file stays after its index stops naming it, for clients holding an older index. */
+const CYCLING_KEEP_DAYS = 14;
+
+/**
+ * Remove the published cycling files the index no longer names, once they're CYCLING_KEEP_DAYS old
+ * (uploads copy, so they'd stay for good: a day's tiles are about 5 MB). The current ones are kept
+ * whatever their age, since a file built again with the same content isn't uploaded again.
+ */
+async function pruneCycling(remote: string): Promise<void> {
+  const { area } = await readCyclingConfig();
+  const index = await readJson<CyclingIndex>(
+    `${cyclingPaths(area.id).out}/${CYCLING_INDEX}`,
+  ).catch(() => undefined);
+  if (!index) return;
+  await run("rclone", [
+    "delete",
+    `${remote}/${cyclingDataPath(area.id)}`,
+    ...[CYCLING_INDEX, index.tiles].flatMap((f) => ["--exclude", `/${f}`]),
+    "--min-age",
+    `${CYCLING_KEEP_DAYS}d`,
+  ]);
 }
 
 /** Write every feed's places files (those that changed) and the day's public export from the registry. */

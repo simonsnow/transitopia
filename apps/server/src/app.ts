@@ -1,6 +1,6 @@
 // The server's HTTP API (Hono):
 //
-//   /rt/*, /regions/*  public real-time API (rt/service.ts), CORS *, cached at the edge
+//   /rt/*, /feeds/*, /networks/*, /regions/*  public real-time API (rt/service.ts), CORS *, cached at the edge
 //   /healthz           freshness checks for monitoring (503 when data is stale)
 //   /auth/*            admin sign-in with GitHub (auth.ts)
 //   /admin/api/*       the review queue behind /admin: disruptions and observations with previews,
@@ -10,6 +10,7 @@ import { statfs } from "node:fs/promises";
 import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { isServiceDate } from "@transitopia/transit-core/time.ts";
+import { formatKey, parseKey } from "@transitopia/shared/features.ts";
 import {
   featureDetail,
   mergeFeatures,
@@ -58,16 +59,20 @@ import { originAllowed, type ServerEnv } from "./env.ts";
 import type { CorrectionsRepo } from "./corrections.ts";
 import type { Jobs } from "./jobs/scheduler.ts";
 import { serverConfig } from "./config.ts";
+import type { FindCyclingFeature } from "./features/cycling.ts";
+import { cyclingRouteDetail } from "./features/cycling-routes.ts";
 
 export interface AppDeps {
   service: RtService;
   auth: Auth;
   env: ServerEnv;
-  db?: Db | undefined;
-  repo?: CorrectionsRepo | undefined;
+  db: Db;
+  repo: CorrectionsRepo;
   jobs?: Jobs | undefined;
   /** A directory on the disk /healthz watches (var/); none, no disk check. */
   diskPath?: string | undefined;
+  /** The cycling map's OSM features, for OSM refs the registry has no feature for (features/cycling.ts). */
+  cycling?: FindCyclingFeature | undefined;
 }
 
 type Env = { Variables: { user: SessionUser } };
@@ -84,27 +89,31 @@ export function createApp(deps: AppDeps): Hono<Env> {
   });
 
   // ---- Real-time API -------------------------------------------------------------------------
-  app.on(["GET", "HEAD", "OPTIONS"], ["/rt/*", "/regions/*"], async (c) => {
-    if (c.req.method === "OPTIONS")
-      return c.body(null, 204, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
-      });
-    const url = new URL(c.req.url);
-    const r = await service.handle(url.pathname, url.searchParams);
-    if (
-      r.status === 200
-      && notModified(
-        c.req.header("If-None-Match"),
-        r.headers["ETag"] ?? r.headers["etag"],
+  app.on(
+    ["GET", "HEAD", "OPTIONS"],
+    ["/rt/*", "/feeds/*", "/networks/*", "/regions/*"],
+    async (c) => {
+      if (c.req.method === "OPTIONS")
+        return c.body(null, 204, {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+        });
+      const url = new URL(c.req.url);
+      const r = await service.handle(url.pathname, url.searchParams);
+      if (
+        r.status === 200
+        && notModified(
+          c.req.header("If-None-Match"),
+          r.headers["ETag"] ?? r.headers["etag"],
+        )
       )
-    )
-      return new Response(null, { status: 304, headers: r.headers });
-    return new Response(
-      c.req.method === "HEAD" ? null : new Uint8Array(Buffer.from(r.body)),
-      { status: r.status, headers: r.headers },
-    );
-  });
+        return new Response(null, { status: 304, headers: r.headers });
+      return new Response(
+        c.req.method === "HEAD" ? null : new Uint8Array(Buffer.from(r.body)),
+        { status: r.status, headers: r.headers },
+      );
+    },
+  );
 
   // ---- Feature resolver (apps/server/README.md#feature-resolver) -------------------------------
   app.get("/features/:key", async (c) => {
@@ -112,14 +121,36 @@ export function createApp(deps: AppDeps): Hono<Env> {
       "Access-Control-Allow-Origin": "*",
       "Cache-Control": "public, max-age=3600",
     };
-    if (!db) return c.json({ error: "No feature registry" }, 503, headers);
+    const key = c.req.param("key");
     const date = c.req.query("date");
     if (date !== undefined && !isServiceDate(date))
       return c.json({ error: "date is YYYYMMDD" }, 400, headers);
-    const r = await resolveKey(db, c.req.param("key"), date);
-    if (r === "unminted") return c.json({ unminted: true }, 404, headers);
+    const r = await resolveKey(db, key, date);
+    if (r === "unminted") {
+      // No ID yet: the cycling map's latest build may still know where it is.
+      const f = await deps.cycling?.(key);
+      return f ?
+          c.json(
+            { unminted: true, ...f, refs: [formatKey(parseKey(key)!)] },
+            200,
+            headers,
+          )
+        : c.json({ unminted: true }, 404, headers);
+    }
     if (!r) return c.json({ error: "Unknown feature" }, 404, headers);
     return c.json(r, 200, headers);
+  });
+
+  // ---- Bike routes (apps/server/README.md#cycling-routes) ------------------------------------
+  app.get("/cycling/routes/:key", async (c) => {
+    const headers = {
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "public, max-age=3600",
+    };
+    const r = await cyclingRouteDetail(db, c.req.param("key"));
+    return r ?
+        c.json(r, 200, headers)
+      : c.json({ error: "Unknown bike route" }, 404, headers);
   });
 
   app.get("/healthz", async (c) => {
@@ -177,15 +208,13 @@ export function createApp(deps: AppDeps): Hono<Env> {
     c.json({
       rt: await rtStatusOf(service),
       health: await health(deps),
-      jobs: db ? await recentRuns(db, 40) : [],
-      daily: db ? await recentRuns(db, 60, "daily") : [],
-      storage: db ? await storageSizes(db) : null,
+      jobs: await recentRuns(db, 40),
+      daily: await recentRuns(db, 60, "daily"),
+      storage: await storageSizes(db),
     } satisfies StatusResponse),
   );
 
   // ---- Features (docs/DESIGN.md#feature-ids): containment, merges and flags ------------------
-  const needDb = (c: Context<Env>) =>
-    c.json({ error: "No database: no feature registry" }, 409);
   /**
    * Who made a registry change (feature_changes.user_id): a signed-in admin's users row; none for
    * ADMIN_DEV_TOKEN's local admin, who has no row.
@@ -205,21 +234,18 @@ export function createApp(deps: AppDeps): Hono<Env> {
   };
 
   app.get("/admin/api/features", async (c) => {
-    if (!db) return needDb(c);
     return c.json({
       results: await searchFeatures(db, c.req.query("q") ?? ""),
     } satisfies z.input<typeof featureSearchResponse>);
   });
 
   app.get("/admin/api/features/:id", async (c) => {
-    if (!db) return needDb(c);
     const d = await featureDetail(db, c.req.param("id"));
     if (!d) return c.json({ error: "No such feature" }, 404);
     return c.json(d satisfies z.input<typeof featureDetailResponse>);
   });
 
   app.post("/admin/api/features/:id/parent", async (c) => {
-    if (!db) return needDb(c);
     const body = await parseBody(c, setParentRequest);
     if (!body.ok) return body.response;
     return change(c, () =>
@@ -228,12 +254,10 @@ export function createApp(deps: AppDeps): Hono<Env> {
   });
 
   app.post("/admin/api/features/:id/retire", async (c) => {
-    if (!db) return needDb(c);
     return change(c, () => retire(db, c.req.param("id"), userId(c)));
   });
 
   app.post("/admin/api/features/:id/merge", async (c) => {
-    if (!db) return needDb(c);
     const body = await parseBody(c, mergeRequest);
     if (!body.ok) return body.response;
     return change(c, () =>
@@ -242,7 +266,6 @@ export function createApp(deps: AppDeps): Hono<Env> {
   });
 
   app.post("/admin/api/features/exchange", async (c) => {
-    if (!db) return needDb(c);
     const body = await parseBody(c, newExchangeRequest);
     if (!body.ok) return body.response;
     try {
@@ -259,14 +282,12 @@ export function createApp(deps: AppDeps): Hono<Env> {
   });
 
   app.get("/admin/api/feature-flags", async (c) => {
-    if (!db) return needDb(c);
     return c.json({
       flags: await openFlags(db),
     } satisfies z.input<typeof featureFlagsResponse>);
   });
 
   app.post("/admin/api/feature-flags/:id/resolve", async (c) => {
-    if (!db) return needDb(c);
     const body = await parseBody(c, resolveFlagRequest);
     if (!body.ok) return body.response;
     return change(c, () =>
@@ -279,13 +300,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
     );
   });
 
-  const needRepo = (c: Context<Env>) =>
-    repo ? undefined : (
-      c.json({ error: "No database: corrections are files" }, 409)
-    );
-
   app.get("/admin/api/corrections", async (c) => {
-    if (!repo) return needRepo(c)!;
     const [disruptions, observationSets] = await Promise.all([
       repo.disruptions(),
       repo.observationSets(),
@@ -301,7 +316,6 @@ export function createApp(deps: AppDeps): Hono<Env> {
   // Edit (or create) a disruption. Edits keep the review state, except that a confirmed one goes
   // back to draft: it has to be previewed and confirmed again.
   app.put("/admin/api/disruptions/:id", async (c) => {
-    if (!repo) return needRepo(c)!;
     const id = c.req.param("id");
     const body = await parseBody(c, disruption);
     if (!body.ok) return body.response;
@@ -317,7 +331,6 @@ export function createApp(deps: AppDeps): Hono<Env> {
   });
 
   app.put("/admin/api/observations/:id", async (c) => {
-    if (!repo) return needRepo(c)!;
     const id = c.req.param("id");
     if (!ID.test(id)) return c.json({ error: "Bad id" }, 400);
     const body = await parseBody(c, observationSetPut);
@@ -342,7 +355,6 @@ export function createApp(deps: AppDeps): Hono<Env> {
   app.post(
     "/admin/api/:kind{disruptions|observations}/:id/preview",
     async (c) => {
-      if (!repo) return needRepo(c)!;
       if (!service.dispatcher)
         return c.json({ error: "Live dispatch runs on the leader" }, 409);
       const { kind, id } = c.req.param();
@@ -375,7 +387,6 @@ export function createApp(deps: AppDeps): Hono<Env> {
   app.post(
     "/admin/api/:kind{disruptions|observations}/:id/:action{confirm|discard|reopen}",
     async (c) => {
-      if (!repo) return needRepo(c)!;
       const { kind, id, action } = c.req.param();
       if (kind === "disruptions" && action === "confirm") {
         const d = await repo.disruption(id);
@@ -399,7 +410,6 @@ export function createApp(deps: AppDeps): Hono<Env> {
 
   // The confirmed corrections in the file format, e.g. for a test fixture or the static build.
   app.get("/admin/api/export", async (c) => {
-    if (!repo) return needRepo(c)!;
     const observations: Record<string, ObservationFile> = {};
     for (const s of await repo.observationSets(["confirmed"]))
       observations[s.id] = s.body;
@@ -413,7 +423,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
   return app;
 }
 
-/** What the disruption format requires (config/regions/metro-vancouver/disruptions/README.md). */
+/** What the disruption format requires (config/networks/skytrain/disruptions/README.md). */
 export function disruptionProblems(
   d: Disruption,
   id: string,
@@ -455,13 +465,11 @@ export async function health({
   diskPath,
 }: AppDeps): Promise<Health> {
   const checks: Health["checks"] = {};
-  if (db) {
-    try {
-      await sql`select 1`.execute(db);
-      checks.database = { ok: true };
-    } catch (e) {
-      checks.database = { ok: false, detail: (e as Error).message };
-    }
+  try {
+    await sql`select 1`.execute(db);
+    checks.database = { ok: true };
+  } catch (e) {
+    checks.database = { ok: false, detail: (e as Error).message };
   }
   const status = await rtStatusOf(service);
   // Each feed the leader polls: its positions, and its trip updates' freshness and coverage.

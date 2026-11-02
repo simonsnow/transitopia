@@ -20,6 +20,7 @@ const plan = {
       brand: false,
       color: "#000",
       textColor: "#fff",
+      feed: "translink",
       gtfsRouteId: "6612",
     },
   ],
@@ -119,6 +120,13 @@ describe("hubsFromPlaces", () => {
         routes: ["99"],
       },
     ]);
+  });
+
+  it("doesn't wait for the plan's trips, which load after its places file may", () => {
+    const loading = { ...plan, trips: [] };
+    expect(hubsFromPlaces(loading, places)).toEqual(
+      hubsFromPlaces(plan, places),
+    );
   });
 
   it("leaves out an exchange no drawn bus serves", () => {

@@ -1,5 +1,6 @@
 import React from "react";
 import { creditsFor, legendsFor } from "@transitopia/shared/datasets.ts";
+import { Icon } from "../components/Icon.tsx";
 
 // Credits for exactly the data on screen (docs/DESIGN.md#attribution): each mode (and the transit engine)
 // declares what it draws with useDatasets(); the basemap is always there.
@@ -9,11 +10,16 @@ const BASEMAP_DATASETS = ["osm", "protomaps"];
 type Registry = {
   add: (ids: readonly string[]) => () => void;
   ids: readonly string[];
+  /** Whether the About panel (the credits) is open: its ⓘ button or the map's context menu. */
+  aboutOpen: boolean;
+  setAboutOpen: (open: boolean) => void;
 };
 
 const AttributionContext = React.createContext<Registry>({
   add: () => () => {},
   ids: BASEMAP_DATASETS,
+  aboutOpen: false,
+  setAboutOpen: () => {},
 });
 
 export const AttributionProvider: React.FC<{ children: React.ReactNode }> = ({
@@ -22,6 +28,7 @@ export const AttributionProvider: React.FC<{ children: React.ReactNode }> = ({
   const [counts, setCounts] = React.useState<ReadonlyMap<string, number>>(
     new Map(),
   );
+  const [aboutOpen, setAboutOpen] = React.useState(false);
   const add = React.useCallback((ids: readonly string[]) => {
     const bump = (d: 1 | -1) =>
       setCounts((prev) => {
@@ -37,8 +44,13 @@ export const AttributionProvider: React.FC<{ children: React.ReactNode }> = ({
     return () => bump(-1);
   }, []);
   const value = React.useMemo(
-    () => ({ add, ids: [...BASEMAP_DATASETS, ...counts.keys()] }),
-    [add, counts],
+    () => ({
+      add,
+      ids: [...BASEMAP_DATASETS, ...counts.keys()],
+      aboutOpen,
+      setAboutOpen,
+    }),
+    [add, counts, aboutOpen],
   );
   return (
     <AttributionContext.Provider value={value}>
@@ -54,18 +66,53 @@ export function useDatasets(ids: readonly string[]): void {
   React.useEffect(() => (key ? add(key.split(",")) : undefined), [add, key]);
 }
 
+/** Open or close the About panel. */
+export function useAboutPanel(): {
+  open: boolean;
+  setOpen: (open: boolean) => void;
+} {
+  const { aboutOpen, setAboutOpen } = React.useContext(AttributionContext);
+  return { open: aboutOpen, setOpen: setAboutOpen };
+}
+
 export const AttributionControl: React.FC = () => {
-  const { ids } = React.useContext(AttributionContext);
-  const [open, setOpen] = React.useState(false);
+  const {
+    ids,
+    aboutOpen: open,
+    setAboutOpen: setOpen,
+  } = React.useContext(AttributionContext);
   const datasets = creditsFor(ids);
   const legends = legendsFor(datasets);
+
+  // Escape closes the panel. It's caught first and marked handled, so an open card stays open
+  // (InfoCard closes on Escape).
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      e.preventDefault();
+      setOpen(false);
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [open, setOpen]);
+
   return (
     <div className="absolute bottom-0 right-0 z-40 max-w-full flex flex-col items-end pointer-events-none text-xs">
       {open ?
         <div
           id="attribution-details"
           className="pointer-events-auto m-2 mb-0 max-w-md max-h-[60dvh] overflow-y-auto rounded-md border border-gray-300 bg-white p-3 shadow-md dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100">
-          <h2 className="mb-1 font-semibold">About Transitopia</h2>
+          <div className="-my-3 -mr-2 flex items-center">
+            <h2 className="flex-1 font-semibold">About Transitopia</h2>
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={() => setOpen(false)}
+              className="flex h-11 w-11 flex-none items-center justify-center rounded-full hover:bg-gray-200 dark:hover:bg-gray-700">
+              <Icon icon="close" size={18} />
+            </button>
+          </div>
           <p className="my-2">
             Transitopia is a mapping project that aims to provide high-quality
             real-time public transit and micromobility maps. The source is on
@@ -121,6 +168,14 @@ export const AttributionControl: React.FC = () => {
             </p>
           ))}
           <p className="mt-2">
+            <a
+              href="https://github.com/transitopia/transitopia/issues"
+              className="underline"
+              target="_blank"
+              rel="noreferrer">
+              Report an issue or suggestion
+            </a>
+            {" · "}
             <a
               href="https://github.com/transitopia/transitopia/blob/main/DATA-LICENSES.md"
               className="underline"

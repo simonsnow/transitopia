@@ -1,4 +1,4 @@
 {
-  "$comment": "Every route in the BC Transit feed is drawn by default.",
+  "$comment": "How BC Transit's Fraser Valley routes are drawn where the GTFS alone doesn't say; every route in the feed is drawn by default (school specials 22, 24 and 26 included), and the format is in config/feeds/translink/routes.json. No overrides: every route, including the 21 to Aldergrove and the 66 to Lougheed, is coloured by frequency (the 66 in its own colour was too distracting, a long route in a thick bright line).",
   "routes": []
 }

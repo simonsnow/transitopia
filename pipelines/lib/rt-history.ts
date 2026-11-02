@@ -10,7 +10,10 @@ import {
   trackedOnly,
   type RtSnapshot,
 } from "@transitopia/transit-core/rt/types.ts";
-import { feedForDate } from "@transitopia/transit-core/plan/types.ts";
+import {
+  feedForDate,
+  gtfsRouteIds,
+} from "@transitopia/transit-core/plan/types.ts";
 import {
   preparePlan,
   type PreparedPlan,
@@ -21,7 +24,6 @@ import {
   PUBLIC_DIR,
   feedPaths,
   readManifest,
-  regionOfFeed,
   readFeedConfig,
 } from "@transitopia/data/paths.ts";
 
@@ -80,15 +82,15 @@ async function busRouteKeys(feed: string): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   for (const f of (await readManifest(feed)).feeds)
     for (const r of (await readPlanCore(join(PUBLIC_DIR, f.path))).routes)
-      if (r.kind === "bus") out.set(r.gtfsRouteId, r.key);
+      if (r.kind === "bus")
+        for (const id of gtfsRouteIds(r)) out.set(id, r.key);
   return out;
 }
 
 /** A feed's prepared plans by version, loaded on demand; `forTime` picks the version for an instant. */
 export async function planLoader(feed: string) {
   const manifest = await readManifest(feed);
-  const kin = (await readFeedConfig(feed, (await regionOfFeed(feed)).id))
-    .kinematics;
+  const kin = (await readFeedConfig(feed)).kinematics;
   const cache = new Map<string, PreparedPlan>();
   return {
     kin,

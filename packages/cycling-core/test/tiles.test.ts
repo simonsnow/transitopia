@@ -5,6 +5,10 @@ import { parseOpl } from "../src/osm.ts";
 import {
   CYCLING_DETAIL_ZOOM,
   CYCLING_LAYER,
+  CYCLING_MIN_ZOOM,
+  CYCLING_ROUTES_LAYER,
+  CYCLING_ROUTES_MAX_ZOOM,
+  cyclingRouteTileFeatures,
   cyclingTileFeatures,
   osmFeatureId,
 } from "../src/tiles.ts";
@@ -49,6 +53,121 @@ describe("CyclingNetworkBuilder", () => {
         properties: { amenity: "bicycle_parking", osmWayId: 20 },
       },
     ]);
+  });
+
+  it("keeps bike parking's details", () => {
+    const n = network([
+      "n1 Tamenity=bicycle_parking,bicycle_parking=wall_loops,capacity=12,covered=partial,indoor=no,operator=City x0 y0",
+      "n2 Tamenity=bicycle_parking,capacity=~10 x0 y0",
+    ]);
+    expect(n.parking.map((p) => p.properties)).toEqual([
+      {
+        amenity: "bicycle_parking",
+        bicycle_parking: "wall_loops",
+        capacity: 12,
+        covered: true,
+        indoor: false,
+        operator: "City",
+        osmNodeId: 1,
+      },
+      { amenity: "bicycle_parking", osmNodeId: 2 },
+    ]);
+  });
+
+  it("summarises bike routes: their ways and their subroutes', each once", () => {
+    const n = network([
+      ...OPL,
+      "r31 Ttype=route,route=bicycle,name=Greenway,network=rcn,ref=GW Mr30@,w12@,w10@,r99@",
+      "r32 Ttype=route,route=bicycle Mw404@",
+    ]);
+    const r30 = n.routes.get(30)!;
+    const r31 = n.routes.get(31)!;
+    const r32 = n.routes.get(32)!;
+    // w10 and w11, about 1.1 km each; w12, about 0.7 km at 49°.
+    expect(r30.lengthM).toBeGreaterThan(2200);
+    expect(r30.lengthM).toBeLessThan(2250);
+    expect(r30.bbox).toEqual([-123.1, 49.25, -123.1, 49.27]);
+    expect(r31).toMatchObject({
+      name: "Greenway",
+      network: "rcn",
+      ref: "GW",
+      subroutes: [30],
+      bbox: [-123.11, 49.25, -123.1, 49.27],
+    });
+    expect(r31.lengthM - r30.lengthM).toBeGreaterThan(700);
+    expect(r31.lengthM - r30.lengthM).toBeLessThan(750);
+    expect(r30.parents).toEqual([31]);
+    expect(r31.parents).toBeUndefined();
+    expect(r32).toEqual({ lengthM: 0, comfortM: [0, 0, 0, 0, 0] });
+    expect([...n.routes.keys()]).toEqual([30, 31, 32]);
+  });
+
+  it("measures a route by the comfort of each way, 0 where there's no bike facility", () => {
+    const n = network([...OPL, "r31 Ttype=route,route=bicycle Mr30@,w12@"]);
+    const { comfortM, lengthM } = n.routes.get(31)!;
+    // w10 and w11 are cycleways (comfort 4); w12 is a residential street with no facility.
+    expect(comfortM[4]).toBe(n.routes.get(30)!.lengthM);
+    expect(comfortM[0]).toBeGreaterThan(700);
+    expect(comfortM[1] + comfortM[2] + comfortM[3]).toBe(0);
+    expect(
+      Math.abs(comfortM.reduce((a, b) => a + b) - lengthM),
+    ).toBeLessThanOrEqual(2);
+  });
+
+  it("keeps a path open to bicycles only if it's in a bike route", () => {
+    const n = network([
+      ...OPL,
+      "w13 Thighway=bridleway,bicycle=yes Nn4x-123.11y49.27,n9x-123.12y49.27",
+      "w14 Thighway=path,bicycle=yes Nn10x-123.13y49.27,n11x-123.14y49.27",
+      "r31 Ttype=route,route=bicycle Mr30@,w13@",
+    ]);
+    expect(n.ways.map((w) => w.id)).toEqual([10, 11, 13]);
+    expect(n.ways[2]!.attrs).toMatchObject({
+      subclass: "path",
+      comfort: 3,
+      routes: "31",
+    });
+    expect(n.routes.get(31)!.comfortM[3]).toBeGreaterThan(700);
+  });
+
+  it("measures ferry crossings apart from comfort", () => {
+    const n = network([
+      ...OPL,
+      "w20 Troute=ferry,name=Crossing,operator=Hullo%20%Ferries Nn5x-123.12y49.25,n6x-123.12y49.26",
+      "r31 Ttype=route,route=bicycle Mr30@,w20@",
+    ]);
+    const r = n.routes.get(31)!;
+    expect(r.ferryM).toBeGreaterThan(1000);
+    expect(r.comfortM[0]).toBe(0);
+    expect(
+      Math.abs(r.comfortM.reduce((a, b) => a + b) + r.ferryM! - r.lengthM),
+    ).toBeLessThanOrEqual(2);
+    expect(n.routes.get(30)!.ferryM).toBeUndefined();
+    expect(n.ways.find((w) => w.id === 20)?.attrs).toMatchObject({
+      class: "ferry",
+      name: "Crossing",
+      operator: "Hullo Ferries",
+      routes: "31",
+    });
+  });
+
+  it("takes superroutes, and routes in several, and survives a route containing itself", () => {
+    const n = network([
+      ...OPL,
+      "r31 Ttype=superroute,route=bicycle,name=Trail Mr30@,r32@",
+      "r32 Ttype=route,route=bicycle Mw12@,r31@",
+      "r33 Ttype=route,route=bicycle Mr30@,r33@",
+    ]);
+    expect(n.routes.get(30)!.parents).toEqual([31, 33]);
+    expect(n.routes.get(31)).toMatchObject({
+      subroutes: [30, 32],
+      parents: [32],
+    });
+    expect(n.routes.get(32)).toMatchObject({ subroutes: [31], parents: [31] });
+    expect(n.routes.get(33)!.subroutes).toEqual([30]);
+    // Every way once: w10, w11 and w12.
+    expect(n.routes.get(31)!.lengthM).toBe(n.routes.get(32)!.lengthM);
+    expect(n.routes.get(31)!.lengthM).toBeGreaterThan(2900);
   });
 });
 
@@ -110,5 +229,39 @@ describe("cyclingTileFeatures", () => {
       features.filter((f) => f.geometry.type === "Point").map((f) => f.id),
     ).toEqual([osmFeatureId("node", 100), osmFeatureId("way", 20)]);
     expect(osmFeatureId("node", 100)).not.toBe(osmFeatureId("way", 100));
+  });
+});
+
+describe("cyclingRouteTileFeatures", () => {
+  it("gives each route with ways in the area its lines, joined", () => {
+    const n = network([
+      ...OPL,
+      "r31 Ttype=route,route=bicycle,network=rcn Mr30@,w12@",
+      "r32 Ttype=route,route=bicycle Mw404@",
+    ]);
+    const features = [...cyclingRouteTileFeatures(n)];
+    expect(features.map((f) => f.id)).toEqual([
+      osmFeatureId("relation", 30),
+      osmFeatureId("relation", 31),
+    ]);
+    const r31 = features[1]!;
+    expect(r31.properties).toEqual({ network: "rcn" });
+    expect(r31.tippecanoe).toEqual({
+      layer: CYCLING_ROUTES_LAYER,
+      minzoom: CYCLING_MIN_ZOOM,
+      maxzoom: CYCLING_ROUTES_MAX_ZOOM,
+    });
+    // w10, w11 and w12 end to end: one line.
+    expect(r31.geometry).toEqual({
+      type: "MultiLineString",
+      coordinates: [
+        [
+          [-123.1, 49.25],
+          [-123.1, 49.26],
+          [-123.1, 49.27],
+          [-123.11, 49.27],
+        ],
+      ],
+    });
   });
 });

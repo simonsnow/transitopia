@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseConfig, parseFeed } from "@transitopia/transit-core/config.ts";
 import kinematics from "@transitopia/config/defaults/kinematics.json";
+import rt from "@transitopia/config/defaults/rt.json";
 import ferries from "@transitopia/config/feeds/bc-ferries/feed.json";
 import type { VehicleState } from "@transitopia/transit-core/schedule/engine.ts";
 import { serviceDate } from "@transitopia/transit-core/time.ts";
@@ -8,6 +9,7 @@ import { OverlayFeed } from "../src/overlay.ts";
 
 const cfg = {
   kinematics: parseConfig("kinematics", { ...kinematics, routes: {} }),
+  rt: parseConfig("rt", rt),
   feed: parseFeed(ferries),
 };
 
@@ -35,7 +37,7 @@ async function overlay(manifestStatus = 200) {
       : new Response("", { status: manifestStatus }),
     ),
   );
-  return OverlayFeed.load("https://data.example/", "metro-vancouver", cfg);
+  return OverlayFeed.load("https://data.example/", cfg);
 }
 
 afterEach(() => {

@@ -1,16 +1,13 @@
-// Evaluate recorded SeaBus AIS fixes against the timetable (packages/transit-core/DESIGN.md#seabus-ais): how many fixes match a
+// Evaluate recorded ferry AIS fixes (SeaBus, Hullo) against the timetable (packages/transit-core/DESIGN.md#seabus-ais): how many fixes match a
 // trip, how late each vessel ran, which vessel ran which block, and which berths were used.
 //
 //   npx tsx pipelines/eval-ais.ts [YYYYMMDD] [--feed translink]     # default: today's service date
 
-import { join } from "node:path";
 import {
   feedPaths,
   readFeed,
   readFeedConfig,
-  readJson,
-  regionOfFeed,
-  regionPaths,
+  readFerries,
 } from "@transitopia/data/paths.ts";
 import { loadLatestPlan } from "@transitopia/data/infra.ts";
 import { Recorder } from "@transitopia/server/rt/recorder.ts";
@@ -31,14 +28,19 @@ import {
 
 const feedArg = process.argv.indexOf("--feed");
 const FEED = feedArg >= 0 ? process.argv[feedArg + 1]! : "translink";
-const REGION = (await regionOfFeed(FEED)).id;
-const kin = (await readFeedConfig(FEED, REGION)).kinematics;
+const kin = (await readFeedConfig(FEED)).kinematics;
 const ais = (await readFeed(FEED)).ais;
 if (!ais)
   throw new Error(`Feed ${FEED} has no vessels with AIS (feed.json → ais)`);
-const infra = await readJson<any>(
-  join(regionPaths(REGION).infra, "seabus.json"),
+const infra = (await readFerries(FEED)).filter(({ ferry }) =>
+  ais.routes.includes(ferry.route),
 );
+const ferryRoutes = new Set(infra.map(({ ferry }) => ferry.route));
+const missingRoutes = ais.routes.filter((route) => !ferryRoutes.has(route));
+if (missingRoutes.length)
+  throw new Error(
+    `Feed ${FEED} has no berths for ${missingRoutes.join(", ")} (ferries/<route>.json)`,
+  );
 const cfg: AisMatchConfig = ais.match;
 const names = new Map(ais.vessels.map((v) => [v.mmsi, v.name]));
 
@@ -53,6 +55,7 @@ const fixes = (
   await readRecordedFixes(
     new Recorder(feedPaths(FEED).aisHistory, ais.coverageGapS * 1000),
     date,
+    TIMEZONE,
   )
 ).map((f) => ({ ...f, name: names.get(f.mmsi) ?? f.name }));
 if (!fixes.length) {
@@ -88,9 +91,13 @@ for (const [tripId, c] of r.corrections.trips) {
 
 // Stationary fixes near a berth: which berth pair is in use.
 const berths: { name: string; dock: LonLat }[] = [];
-for (const [t, term] of Object.entries<any>(infra.terminals))
-  for (const [b, berth] of Object.entries<any>(term.berths))
-    berths.push({ name: `${t} ${b}`, dock: berth.dock });
+for (const { ferry } of infra)
+  for (const [t, term] of Object.entries(ferry.terminals))
+    for (const [b, berth] of Object.entries(term.berths))
+      berths.push({
+        name: `${ferry.route} ${t} ${b}`,
+        dock: berth.dock,
+      });
 const seen = new Map<string, number>();
 for (const f of fixes) {
   if ((f.sog ?? 99) > cfg.stationaryKn) continue;

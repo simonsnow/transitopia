@@ -4,7 +4,7 @@ A bus region with ferries: BC Transit's [West Kootenay](https://www.bctransit.co
 
 | Path | What |
 |---|---|
-| `region.json` | bbox (Grand Forks, Rossland to Revelstoke, Kaslo and Creston), time zone, the first view of `/transit` (Nelson), time zone data checks, and its feeds |
+| `region.json` | bbox (Grand Forks, Rossland to Revelstoke, Kaslo and Creston), the first view of `/transit` (Nelson), and its feeds |
 | Settings | None of its own yet: vehicles and real-time use come from [config/defaults/](../../defaults/), BC Transit's [operator.json](../../operators/bc-transit/operator.json) and, for the ferry, [BC Inland Ferries'](../../operators/bc-mott/operator.json), each with a source or "guess" and a cross-reference to [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) |
 
 ## Systems

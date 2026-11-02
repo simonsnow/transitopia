@@ -1,6 +1,6 @@
 // Validate and publish observation files (packages/transit-core/DESIGN.md#corrections):
-//   config/regions/<region>/observations/*.json → var/public/data/regions/<region>/observations/<name>.json + index.json (by service date),
-//   for each region with track-level rail
+//   config/feeds/<feed>/observations/*.json → var/public/data/feeds/<feed>/observations/<name>.json + index.json (by service date),
+//   for each feed with track-level rail
 //
 //   npm run build:observations
 
@@ -10,10 +10,11 @@ import { join } from "node:path";
 import {
   PUBLIC_DIR,
   log,
+  correctionPaths,
   railNetworks,
-  regionPaths,
   readJson,
   writeJson,
+  type RailNetwork,
 } from "@transitopia/data/paths.ts";
 import type {
   Observation,
@@ -21,11 +22,12 @@ import type {
   ObservationIndex,
 } from "@transitopia/transit-core/corrections/types.ts";
 import { observationProblems } from "@transitopia/transit-core/corrections/validate.ts";
-import { regionDataPath } from "@transitopia/transit-core/plan/types.ts";
+import { feedDataPath } from "@transitopia/transit-core/plan/types.ts";
 
-async function buildRegion(region: string) {
-  const SRC = regionPaths(region).observations;
-  const REL = regionDataPath(region, "observations");
+/** A rail feed's observations (railNetworks: whose dispatcher reads them). */
+async function buildFeed(net: RailNetwork) {
+  const SRC = correctionPaths(net).observations;
+  const REL = feedDataPath(net.feed, undefined, "observations");
   const OUT = join(PUBLIC_DIR, REL);
   let files: string[] = [];
   try {
@@ -60,8 +62,8 @@ async function buildRegion(region: string) {
 }
 
 async function main() {
-  const regions = new Set((await railNetworks()).map((n) => n.region));
-  for (const region of regions) await buildRegion(region);
+  const feeds = new Map((await railNetworks()).map((n) => [n.feed, n]));
+  for (const net of feeds.values()) await buildFeed(net);
 }
 
 main().catch((e) => {

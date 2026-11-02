@@ -28,6 +28,7 @@ import {
   ProfileBuilder,
   type PredictionConfig,
 } from "@transitopia/transit-core/rt/profile.ts";
+import { publishedBandProfiles } from "@transitopia/transit-core/rt/profile-bands.ts";
 import { RtTimeline } from "@transitopia/transit-core/rt/timeline.ts";
 import { distM } from "@transitopia/transit-core/geo.ts";
 import type { RtVehicle } from "@transitopia/transit-core/rt/types.ts";
@@ -38,12 +39,7 @@ import {
   planLoader,
   type RecordedHour,
 } from "./lib/rt-history.ts";
-import {
-  log,
-  readFeed,
-  regionOfFeed,
-  readFeedConfig,
-} from "@transitopia/data/paths.ts";
+import { log, readFeed, readFeedConfig } from "@transitopia/data/paths.ts";
 import { cadence, pollIntervalS } from "@transitopia/transit-core/rt/budget.ts";
 import type { RtSnapshot } from "@transitopia/transit-core/rt/types.ts";
 
@@ -58,7 +54,7 @@ const feedRt =
   ?? (() => {
     throw new Error(`Feed ${FEED} has no real-time data`);
   })();
-const rtConfig = (await readFeedConfig(FEED, (await regionOfFeed(FEED)).id)).rt;
+const rtConfig = (await readFeedConfig(FEED)).rt;
 const CADENCE = cadence(feedRt);
 /** An hour counts as complete when its snapshots span at least this long (two 300 s polls short of an hour). */
 const COMPLETE_HOUR_SPAN_MS = 50 * 60_000;
@@ -163,7 +159,8 @@ async function main() {
   );
   log(`Test: ${test.map((h) => h.label).join(", ")}`);
 
-  const withProfile = new Predictor(pp, cfg, profile);
+  const bands = publishedBandProfiles(profile);
+  const withProfile = new Predictor(pp, cfg, bands);
   const timetable = new Predictor(pp, cfg);
   // Horizon buckets (s ahead of the fix the prediction starts from).
   const buckets: [string, number, number][] = [
@@ -223,7 +220,7 @@ async function main() {
   }
   printPrediction(err, buckets);
   if (!args.includes("--no-live"))
-    liveReplay(test, pp, plans.kin, new Predictor(pp, cfg, profile));
+    liveReplay(test, pp, plans.kin, new Predictor(pp, cfg, bands));
 }
 
 function printPrediction(
@@ -305,6 +302,8 @@ function liveReplay(
     maxInterpolateS: CADENCE.maxInterpolateS,
     maxExtrapolateS: CADENCE.maxExtrapolateS,
     source: "eval",
+    feed: FEED,
+    timezone: pp.plan.timezone,
   };
   const variants = {
     old: base,

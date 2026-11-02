@@ -35,7 +35,12 @@ const cfg = (json: unknown) => parseConfig("routes", json);
 
 describe("selectRoutes", () => {
   it("draws every route by default, modelled from its route_type", () => {
-    const { routes, skipped } = selectRoutes(ROWS, cfg({ routes: [] }), "ds");
+    const { routes, skipped } = selectRoutes(
+      ROWS,
+      cfg({ routes: [] }),
+      "translink",
+      "ds",
+    );
     expect(routes.map((r) => [r.key, r.label, r.kind, r.brand])).toEqual([
       ["expo-line", "Expo Line", "shape", true],
       ["seabus", "SeaBus", "shape", true],
@@ -81,6 +86,7 @@ describe("selectRoutes", () => {
         ],
         exclude: [{ match: { route_short_name: "N17" } }],
       }),
+      "translink",
       undefined,
     );
     expect(routes.map((r) => r.key)).toEqual([
@@ -107,6 +113,7 @@ describe("selectRoutes", () => {
       selectRoutes(
         [row("a", "5", "Robson"), row("b", "5", "Robson")],
         cfg({ routes: [{ key: "5", match: { route_short_name: "5" } }] }),
+        "translink",
         undefined,
       ),
     ).toThrow(/matches more than one/);
@@ -114,6 +121,7 @@ describe("selectRoutes", () => {
       selectRoutes(
         [row("a", "005", "Robson"), row("b", "5", "Davie")],
         cfg({ routes: [] }),
+        "translink",
         undefined,
       ),
     ).toThrow(/Two routes have the key 5/);
@@ -137,6 +145,7 @@ describe("selectRoutes", () => {
           },
         ],
       }),
+      "bc-transit",
       undefined,
     );
     expect(routes.map((r) => [r.key, r.name, r.label, r.brand])).toEqual([
@@ -155,6 +164,7 @@ describe("selectRoutes", () => {
         { ...row("15-CR", "15", "Quinsam", "3", "000000"), agency_id: "cr" },
       ],
       cfg({ routes: [] }),
+      "bc-transit",
       undefined,
     );
     expect(Object.fromEntries(routes.map((r) => [r.key, r.color]))).toEqual({
@@ -172,6 +182,7 @@ describe("selectRoutes", () => {
         row("b", "", "Horseshoe Bay - Langdale", "4", "000000"),
       ],
       cfg({ noColor: "#2a6f97", routes: [] }),
+      "bc-transit",
       undefined,
     );
     expect(routes.map((r) => r.color)).toEqual(["#2a6f97", "#2a6f97"]);
@@ -189,6 +200,7 @@ describe("selectRoutes", () => {
           },
         ],
       }),
+      "bc-transit",
       undefined,
     );
     expect(routes[0]).toMatchObject({ key: "harrop", vehicles: false });
@@ -209,9 +221,43 @@ describe("selectRoutes", () => {
     const { routes } = selectRoutes(
       [{ ...row("a", "5", "Robson"), agency_id: "x" }],
       cfg({ routes: [] }),
+      "translink",
       undefined,
     );
     expect(routes.map((r) => [r.key, r.name])).toEqual([["5", "5"]]);
+  });
+});
+
+describe("merged routes", () => {
+  it("draws one route for every GTFS route an entry's match list matches", () => {
+    const { routes } = selectRoutes(
+      [
+        row("NAN-VAN", "Nan→Van", "Nanaimo to Vancouver", "4"),
+        row("VAN-NAN", "Van→Nan", "Vancouver to Nanaimo", "4"),
+      ],
+      cfg({
+        routes: [
+          {
+            key: "hullo",
+            label: "Hullo",
+            match: [
+              { route_long_name: "Nanaimo to Vancouver" },
+              { route_long_name: "Vancouver to Nanaimo" },
+            ],
+          },
+        ],
+      }),
+      "hullo",
+      undefined,
+    );
+    expect(routes).toHaveLength(1);
+    expect(routes[0]).toMatchObject({
+      key: "hullo",
+      label: "Hullo",
+      mode: "ferry",
+      gtfsRouteId: "NAN-VAN",
+      mergedGtfsRouteIds: ["VAN-NAN"],
+    });
   });
 });
 

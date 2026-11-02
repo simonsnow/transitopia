@@ -12,9 +12,12 @@
 //    those bins get the nearby pace), which is what makes predicted buses visibly stop.
 // Totals are preserved: pace × distance + dwells ≈ observed running time.
 //
+// Published one band per file (profile-bands.ts), with the all-day profile filled in where a band
+// has no data.
+//
 // Prediction: from a fix, walk bin by bin, stopping at each upcoming stop for its expected dwell,
-// scaled by how this bus has been running relative to the profile. Gaps fall back to the all-day
-// profile, then to the timetable, then to a default speed. Stops TransLink reports as skipped by a
+// scaled by how this bus has been running relative to the profile. Gaps (and bands not loaded yet)
+// fall back to the timetable, then to a default speed. Stops TransLink reports as skipped by a
 // trip (GTFS-RT, e.g. on a detour) get no dwell.
 
 import { cumulativeLengths, projectOnto, type LonLat } from "../geo.ts";
@@ -30,6 +33,7 @@ import {
   toWallTime,
   type ServiceDate,
 } from "../time.ts";
+import type { RtBandProfile } from "./profile-bands.ts";
 import type { RtSnapshot, RtVehicle } from "./types.ts";
 
 export interface PredictionConfig {
@@ -93,8 +97,8 @@ export interface ShapeProfile {
   all: BandProfile;
 }
 
-export interface RtProfileFile {
-  schema: 1;
+/** A learned profile, every band; published per band (profile-bands.ts). */
+export interface RtProfile {
   feedVersion: string;
   builtAt: string;
   binM: number;
@@ -220,7 +224,7 @@ export class ProfileBuilder {
     return a;
   }
 
-  build(): RtProfileFile {
+  build(): RtProfile {
     const { cfg, pp } = this;
     const shapes: Record<string, ShapeProfile> = {};
     for (const [shape, accs] of this.acc) {
@@ -249,7 +253,6 @@ export class ProfileBuilder {
       shapes[shape] = { bands: accs.slice(0, -1).map(toBand), all };
     }
     return {
-      schema: 1,
       feedVersion: pp.plan.feedVersion,
       builtAt: new Date().toISOString(),
       binM: cfg.binM,
@@ -427,9 +430,13 @@ export interface WalkResult {
 }
 
 /** Service date (YYYYMMDD) of a trip running at an instant: after-midnight trips belong to the day before. */
-export function tripServiceDate(trip: PreparedTrip, ms: number): ServiceDate {
-  const date = localDate(ms);
-  return (ms - serviceDayStart(date)) / 1000 < trip.trip.start - 6 * 3600 ?
+export function tripServiceDate(
+  trip: PreparedTrip,
+  ms: number,
+  tz: string,
+): ServiceDate {
+  const date = localDate(ms, tz);
+  return (ms - serviceDayStart(date, tz)) / 1000 < trip.trip.start - 6 * 3600 ?
       addDays(date, -1)
     : date;
 }
@@ -449,18 +456,19 @@ export class Predictor {
 
   private pp: PreparedPlan;
   private cfg: PredictionConfig;
-  private profile: RtProfileFile | undefined;
+  private bands: readonly (RtBandProfile | undefined)[];
   private skipped: SkippedStops | undefined;
 
+  /** @param bands The profile by band, where loaded. */
   constructor(
     pp: PreparedPlan,
     cfg: PredictionConfig,
-    profile?: RtProfileFile,
+    bands: readonly (RtBandProfile | undefined)[] = [],
     skipped?: SkippedStops,
   ) {
     this.pp = pp;
     this.cfg = cfg;
-    this.profile = profile;
+    this.bands = bands;
     this.skipped = skipped;
   }
 
@@ -470,7 +478,10 @@ export class Predictor {
       this.cfg.bandStartHours,
       localHour(atMs, this.pp.plan.timezone),
     );
-    const skip = this.skipped?.(tripServiceDate(trip, atMs), trip.trip.id);
+    const skip = this.skipped?.(
+      tripServiceDate(trip, atMs, this.pp.plan.timezone),
+      trip.trip.id,
+    );
     const baseKey =
       skip?.size ?
         `${trip.trip.pattern}|${band}|${[...skip].sort().join(",")}`
@@ -497,22 +508,24 @@ export class Predictor {
       cum ?
         cum[cum.length - 1]!
       : trip.pattern.dist[trip.pattern.dist.length - 1]!;
-    const binM = this.profile?.binM ?? cfg.binM;
+    const bp = this.bands[band];
+    const binM = bp?.binM ?? cfg.binM;
     const bins = Math.max(1, Math.ceil(length / binM));
-    const sp = this.profile?.shapes[trip.pattern.shape];
-    const bp = sp?.bands[band] ?? null;
+    const sp = bp?.shapes.get(trip.pattern.shape);
     const dist = trip.pattern.dist;
     const ids = trip.pattern.stops.map((si) => pp.plan.stops[si]!.id);
     const pace = new Float64Array(bins);
-    for (let b = 0; b < bins; b++)
-      pace[b] = bp?.pace[b] ?? sp?.all.pace[b] ?? NaN;
-    const stops = ids.map((id, i) => ({
-      along: dist[i]!,
-      dwell:
-        skip?.has(id) ?
-          0
-        : (bp?.dwell[id] ?? sp?.all.dwell[id] ?? cfg.defaultDwellS),
-    }));
+    for (let b = 0; b < bins; b++) pace[b] = sp?.pace[b] ?? NaN;
+    const stops = ids.map((id, i) => {
+      const k = sp ? sp.stops.indexOf(id) : -1;
+      return {
+        along: dist[i]!,
+        dwell:
+          skip?.has(id) ? 0
+          : k >= 0 ? sp!.dwell[k]!
+          : cfg.defaultDwellS,
+      };
+    });
     return { binM, length, pace, stops, dist };
   }
 
@@ -599,7 +612,22 @@ export class Predictor {
    */
   readonly pacer: TripPacer = (trip, sec, serviceDate) => {
     if (trip.route.kind !== "bus") return undefined;
-    const c = this.course(trip, serviceDayStart(serviceDate) + sec * 1000);
+    return this.paceOn(
+      trip,
+      this.course(
+        trip,
+        serviceDayStart(serviceDate, this.pp.plan.timezone) + sec * 1000,
+      ),
+      sec,
+    );
+  };
+
+  /** The pacer on a course already looked up (`course` is most of a pacer call's cost). */
+  private paceOn(
+    trip: PreparedTrip,
+    c: Course,
+    sec: number,
+  ): { along: number; speed: number } {
     let spans = this.anchors.get(c);
     if (!spans) this.anchors.set(c, (spans = this.buildAnchors(trip, c)));
     let k = spans.length - 2;
@@ -611,7 +639,7 @@ export class Predictor {
       along: Math.min(b.along, w.along),
       speed: w.along >= b.along ? 0 : w.speed,
     };
-  };
+  }
 
   /**
    * Delay (s, + late) of a bus at `along` at service-day second `sec` on a trip, against where the
@@ -626,11 +654,21 @@ export class Predictor {
   ): number {
     const lo = trip.dep[0]!;
     const hi = trip.arr[trip.arr.length - 1]!;
+    const dayStart = serviceDayStart(serviceDate, this.pp.plan.timezone);
+    // The course by service-day hour (`course` is most of a pacer call's cost, and the search makes
+    // dozens): a course changes only with the local hour (its band), and a service day starts on a
+    // local hour (noon − 12 h), so every second of a service-day hour has the same one.
+    const courses = new Map<number, Course>();
     const alongAt = (s: number): number => {
       if (s <= lo) return trip.pattern.dist[0]!;
       if (s >= hi) return trip.pattern.dist[trip.pattern.dist.length - 1]!;
-      const p = this.pacer(trip, s, serviceDate);
-      if (p) return p.along;
+      if (trip.route.kind === "bus") {
+        const h = Math.floor(s / 3600);
+        let c = courses.get(h);
+        if (!c)
+          courses.set(h, (c = this.course(trip, dayStart + h * 3600_000)));
+        return this.paceOn(trip, c, s).along;
+      }
       // Not paced: linear between stops.
       let i = 0;
       while (i < trip.arr.length - 2 && trip.arr[i + 1]! <= s) i++;

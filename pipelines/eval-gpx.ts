@@ -10,7 +10,7 @@
 //
 //   npx tsx pipelines/eval-gpx.ts [<file.gpx> ...] [--set key=value[,key=value]] [--quiet]
 //
-// GPX files are named <date>-<route>-<from>-<to>-B<bus label>-<trip_id>.gpx (config/regions/metro-vancouver/observations/gpx/);
+// GPX files are named <date>-<route>-<from>-<to>-B<bus label>-<trip_id>.gpx (config/feeds/translink/observations/gpx/);
 // with no files, every such file there. The profile is trained on recorded hours before the GPX's day
 // (var/rt-history/, e.g. from npm run snapshot:pull).
 
@@ -27,25 +27,26 @@ import {
   Predictor,
   ProfileBuilder,
   type PredictionConfig,
-  type RtProfileFile,
 } from "@transitopia/transit-core/rt/profile.ts";
+import {
+  publishedBandProfiles,
+  type RtBandProfile,
+} from "@transitopia/transit-core/rt/profile-bands.ts";
 import { RtTimeline } from "@transitopia/transit-core/rt/timeline.ts";
 import type { RtSnapshot } from "@transitopia/transit-core/rt/types.ts";
 import { loadRecordedHours, planLoader } from "./lib/rt-history.ts";
 import {
   log,
   readFeed,
+  feedPaths,
   readFeedConfig,
-  regionOfFeed,
-  regionPaths,
 } from "@transitopia/data/paths.ts";
 
 // GPX rides so far are all on TransLink's buses.
 const FEED = "translink";
-const REGION = (await regionOfFeed(FEED)).id;
-const rtConfig = (await readFeedConfig(FEED, REGION)).rt;
+const rtConfig = (await readFeedConfig(FEED)).rt;
 const CADENCE = cadence((await readFeed(FEED)).realtime!);
-const GPX_DIR = join(regionPaths(REGION).observations, "gpx");
+const GPX_DIR = join(feedPaths(FEED).dir, "observations", "gpx");
 /** The live client keeps at least this much history per timeline (as eval-rt.ts). */
 const HISTORY_MS = 10 * 60_000;
 /** Ground truth is standing below this speed (m/s); GPS speed on a stopped phone is ~0.1–0.5. */
@@ -230,7 +231,7 @@ async function evalFile(
   file: string,
   hoursAll: Awaited<ReturnType<typeof loadRecordedHours>>,
   plans: Awaited<ReturnType<typeof planLoader>>,
-  profiles: Map<string, RtProfileFile>,
+  profiles: Map<string, RtBandProfile[]>,
 ) {
   const name = basename(file, ".gpx");
   const m = /-B(\w+)-(\w+)$/.exec(name);
@@ -266,8 +267,8 @@ async function evalFile(
         && s.fetchedAt <= truth.end + 600_000,
     )
     .sort((a, b) => a.fetchedAt - b.fetchedAt);
-  let profile = profiles.get(day);
-  if (!profile) {
+  let bands = profiles.get(day);
+  if (!bands) {
     const since = new Date(
       Date.parse(day) - rtConfig.prediction.profileHistoryDays * 86_400_000,
     )
@@ -277,10 +278,10 @@ async function evalFile(
     for (const h of hoursAll)
       if (!h.open && h.label < day && h.label >= since)
         builder.add(h.snapshots, h.label);
-    profile = builder.build();
-    profiles.set(day, profile);
+    bands = publishedBandProfiles(builder.build());
+    profiles.set(day, bands);
   }
-  const predictor = new Predictor(pp, cfg, profile);
+  const predictor = new Predictor(pp, cfg, bands);
   const course = predictor.course(trip, truth.start);
 
   const rideMin = (truth.end - truth.start) / 60_000;
@@ -411,6 +412,8 @@ async function evalFile(
     maxInterpolateS: CADENCE.maxInterpolateS,
     maxExtrapolateS: CADENCE.maxExtrapolateS,
     source: "eval",
+    feed: FEED,
+    timezone: pp.plan.timezone,
   };
   const variants = {
     old: base,
@@ -516,7 +519,7 @@ async function main() {
   if (!files.length) throw new Error(`No GPX files (looked in ${GPX_DIR})`);
   const hours = await loadRecordedHours(FEED);
   const plans = await planLoader(FEED);
-  const profiles = new Map<string, RtProfileFile>();
+  const profiles = new Map<string, RtBandProfile[]>();
   log(`${files.length} GPX file(s), ${hours.length} recorded hours`);
   for (const f of files) await evalFile(f, hours, plans, profiles);
   if (files.length > 1) {

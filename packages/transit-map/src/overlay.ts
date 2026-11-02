@@ -27,7 +27,7 @@ import {
   type ServiceDate,
 } from "@transitopia/transit-core/time.ts";
 import type { AisClient } from "./ais.ts";
-import type { OverlayConfig } from "./config.ts";
+import type { FeedConfig } from "./config.ts";
 import { PlanStore, displayServiceDate } from "./plans.ts";
 
 /** Engine ids and route keys of an overlay's vehicles: `<feed>/<id>` (feed ids have no "/"). */
@@ -57,15 +57,11 @@ export class OverlayFeed {
    */
   static async load(
     dataBase: string,
-    region: string,
-    cfg: OverlayConfig,
+    cfg: FeedConfig,
   ): Promise<OverlayFeed | undefined> {
     try {
       // No real time and no rail: only the feed's plans (PlanStore without operations).
-      const store = await PlanStore.load(dataBase, undefined, region, {
-        feed: cfg.feed,
-        kinematics: cfg.kinematics,
-      });
+      const store = await PlanStore.load(dataBase, undefined, cfg);
       return new OverlayFeed(cfg.feed, store);
     } catch (e) {
       console.warn(`Overlay ${cfg.feed.id} not shown:`, e);
@@ -80,7 +76,10 @@ export class OverlayFeed {
 
   /** The plan shown at t (its service date's), or undefined while it loads or out of its range. */
   planAt(t: number, fromSec = 0): PreparedPlan | undefined {
-    return this.store.planFor(displayServiceDate(t), fromSec);
+    return this.store.planFor(
+      displayServiceDate(t, this.info.timezone),
+      fromSec,
+    );
   }
 
   /**

@@ -23,13 +23,15 @@ import { PUBLIC_DATA_DIR, PUBLISH_DATA_DIR } from "@transitopia/data/paths.ts";
 import { run } from "@transitopia/data/exec.ts";
 
 /** Extensions of the files uploaded compressed; anything else (the features export is already gzipped) goes as it is. */
-const COMPRESSED_EXTENSIONS = ["json", "geojson"];
+const COMPRESSED_EXTENSIONS = ["json", "geojson", "bin"];
 const COMPRESSED = COMPRESSED_EXTENSIONS.map((ext) => `*.${ext}`);
 const isCompressed = (name: string) =>
   COMPRESSED_EXTENSIONS.some((ext) => name.endsWith(`.${ext}`));
 
 /** Files clients poll to find the current version of the rest: published last, with a short cache. */
-const POINTERS = ["manifest.json", "places.json", "latest.json"];
+const POINTERS = ["manifest.json", "places.json", "latest.json", "index.json"];
+/** Pointers to a build's files, which only a whole publish uploads (a partial one may not have their files). */
+const BUILD_POINTERS = ["manifest.json", "index.json"];
 
 /**
  * Compressions at once in the server. They run on libuv's thread pool (4 threads by default), which
@@ -60,7 +62,7 @@ export interface StageResult {
 }
 
 /**
- * Write a brotli copy (quality 11) of each JSON and GeoJSON file under `from` to the same path under
+ * Write a brotli copy (quality 11) of each JSON, GeoJSON and .bin file under `from` to the same path under
  * `to`, with its source's modification time, skipping those whose copy already decompresses to the
  * source, and remove copies whose source is gone. With `include`, only the files it names are
  * staged or removed. Copies are written beside `to` and renamed into place, so a concurrent upload
@@ -149,7 +151,7 @@ export async function publishData(
   { include, log, concurrency }: PublishOptions = {},
 ): Promise<void> {
   const pointers =
-    include ? POINTERS.filter((p) => p !== "manifest.json") : POINTERS;
+    include ? POINTERS.filter((p) => !BUILD_POINTERS.includes(p)) : POINTERS;
   const staged = await stageCompressed(PUBLIC_DATA_DIR, PUBLISH_DATA_DIR, {
     include: include && [...include, ...pointers],
     concurrency,

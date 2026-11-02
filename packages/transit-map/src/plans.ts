@@ -41,7 +41,7 @@ import {
   feedForDate,
   manifestRange,
   patternStarts,
-  regionDataPath,
+  networkDataPath,
   type FeedManifest,
   type FeedManifestEntry,
   pathGroup,
@@ -80,7 +80,7 @@ import {
   type ServiceDate,
 } from "@transitopia/transit-core/time.ts";
 import type { VersionPointer } from "@transitopia/transit-core/rt/live.ts";
-import type { RegionConfig } from "./config.ts";
+import type { FeedConfig } from "./config.ts";
 
 /** Trip files arriving within this long of each other are added to the prepared plan at once (ms). */
 const TRIPS_BATCH_MS = 20;
@@ -154,26 +154,22 @@ export class PlanStore {
   readonly dataBase: string;
   /** URL prefix of the RT service, or undefined for schedules only. */
   private readonly apiBase: string | undefined;
-  /** The region's id: its published files are under regionDataPath(region). */
-  readonly region: string;
-  private readonly config: Pick<
-    RegionConfig,
-    "kinematics" | "operations" | "feed"
-  >;
+  private readonly config: Pick<FeedConfig, "kinematics" | "rail" | "feed">;
+  /** The feed's time zone: its service dates (packages/transit-map/README.md#feeds). */
+  readonly tz: string;
 
   private constructor(
     manifest: FeedManifest,
     base: string,
     apiBase: string | undefined,
-    region: string,
-    config: Pick<RegionConfig, "kinematics" | "operations" | "feed">,
+    config: Pick<FeedConfig, "kinematics" | "rail" | "feed">,
     scenario?: ScenarioManifest,
   ) {
     this.manifest = manifest;
     this.dataBase = base;
     this.apiBase = apiBase;
-    this.region = region;
     this.config = config;
+    this.tz = config.feed.timezone;
     this.scenario = scenario;
   }
 
@@ -188,9 +184,14 @@ export class PlanStore {
     return `${this.dataBase}${path}?v=${encodeURIComponent(this.manifest.generatedAt)}`;
   }
 
-  /** Whether the region has track-level rail, and with it tracks, movements, dispatch and observations. */
+  /** Whether the feed has track-level rail, and with it tracks, movements, dispatch and observations. */
   get rail(): boolean {
-    return this.config.operations !== undefined;
+    return this.config.rail !== undefined;
+  }
+
+  /** The rail network's published files (networkDataPath), where the feed runs on one. */
+  private networkPath(file: string): string {
+    return networkDataPath(this.config.rail!.network, file);
   }
 
   /** Enable track-level SkyTrain playback (movement files need the track graph). */
@@ -223,12 +224,18 @@ export class PlanStore {
 
   /** Observations for a service date (empty until loaded or if there are none). */
   private observationsFor(date: ServiceDate): Observation[] | undefined {
-    // Only the rail region publishes observations so far.
+    // Only feeds with track-level rail publish observations so far.
     if (!this.rail) return [];
     if (this.observationIndex === undefined) {
       this.observationIndex = null;
       void fetch(
-        this.dataUrl(regionDataPath(this.region, "observations/index.json")),
+        this.dataUrl(
+          feedDataPath(
+            this.config.feed.id,
+            undefined,
+            "observations/index.json",
+          ),
+        ),
       )
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null)
@@ -271,10 +278,12 @@ export class PlanStore {
           .catch(() => null);
       // The static index (build:dispatch) and, unless viewing a scenario, the live one.
       void Promise.all([
-        get(this.dataUrl(regionDataPath(this.region, "dispatch/index.json"))),
+        get(this.dataUrl(this.networkPath("dispatch/index.json"))),
         this.scenario || !this.apiBase ?
           null
-        : get(`${this.apiBase}rt/dispatch`),
+        : get(
+            `${this.apiBase}networks/${encodeURIComponent(this.config.rail!.network)}/dispatch`,
+          ),
       ]).then(([idx, live]) => {
         this.dispatchIndex = idx ?? { schema: 1, byDate: {} };
         if (live) this.liveDispatch = { ...live.byDate, ...this.liveDispatch };
@@ -285,7 +294,10 @@ export class PlanStore {
     const preview = this.preview[date];
     const entry =
       preview ?
-        { version: preview, path: `rt/dispatch/${date}/${preview}.json` }
+        {
+          version: preview,
+          path: `networks/${this.config.rail!.network}/dispatch/${date}/${preview}.json`,
+        }
       : (this.liveDispatch[date] ?? this.dispatchIndex?.byDate[date]);
     if (!entry) return this.dispatchIndex ? null : undefined;
     const key = `${date}|${entry.version}`;
@@ -294,7 +306,7 @@ export class PlanStore {
       this.fetchOnce(
         key,
         // Live and preview versions are served by the RT service, static ones with the data.
-        entry.path.startsWith("rt/") && this.apiBase ?
+        entry.path.startsWith("networks/") && this.apiBase ?
           `${this.apiBase}${entry.path}`
         : this.dataUrl(entry.path),
         this.patches,
@@ -479,8 +491,10 @@ export class PlanStore {
         this.graph,
         this.config.kinematics,
         {
-          deadheadSpeedFactor: this.config.operations!.yard.deadheadSpeedFactor,
-          turnbackSpeedFactor: this.config.operations!.turnback.speedFactor,
+          deadheadSpeedFactor:
+            this.config.rail!.operations.yard.deadheadSpeedFactor,
+          turnbackSpeedFactor:
+            this.config.rail!.operations.turnback.speedFactor,
           shapes: true,
         },
       );
@@ -518,9 +532,9 @@ export class PlanStore {
   /** Disruptions in effect at instant t (epoch ms), from the dispatch patches of the days running then. */
   noticesAt(t: number): string[] {
     const out: string[] = [];
-    const today = localDate(t);
+    const today = localDate(t, this.tz);
     for (const date of [addDays(today, -1), today]) {
-      const sec = (t - serviceDayStart(date)) / 1000;
+      const sec = (t - serviceDayStart(date, this.tz)) / 1000;
       const patch = this.patchFor(date);
       for (const n of patch?.notices ?? [])
         if (sec >= n.from && sec <= n.to) out.push(`${n.text} (${n.source})`);
@@ -531,13 +545,16 @@ export class PlanStore {
   static async load(
     base: string,
     apiBase: string | undefined,
-    region: string,
-    config: Pick<RegionConfig, "kinematics" | "operations" | "feed">,
+    config: Pick<FeedConfig, "kinematics" | "rail" | "feed">,
     scenario?: string,
   ): Promise<PlanStore> {
     if (scenario) {
+      if (!config.rail)
+        throw new Error(
+          `Scenarios are a rail network's, and ${config.feed.name} runs on none.`,
+        );
       const res = await fetch(
-        `${base}${regionDataPath(region, `scenarios/${encodeURIComponent(scenario)}/manifest.json`)}`,
+        `${base}${networkDataPath(config.rail.network, `scenarios/${encodeURIComponent(scenario)}/manifest.json`)}`,
       );
       if (!res.ok)
         throw new Error(
@@ -548,7 +565,6 @@ export class PlanStore {
         { schema: 1, generatedAt: sm.builtAt, feeds: sm.feeds },
         base,
         apiBase,
-        region,
         config,
         sm,
       );
@@ -562,18 +578,14 @@ export class PlanStore {
       (await res.json()) as FeedManifest,
       base,
       apiBase,
-      region,
       config,
     );
   }
 
-  /** Track network to draw and route on, in a region with track-level rail. */
+  /** Track network to draw and route on, for a feed with track-level rail. */
   get tracksPath(): string | undefined {
     if (!this.rail) return undefined;
-    return (
-      this.scenario?.tracks
-      ?? regionDataPath(this.region, "infra/tracks.geojson")
-    );
+    return this.scenario?.tracks ?? this.networkPath("infra/tracks.geojson");
   }
 
   /** Instants covered by the available feeds: first service day start to end of last service day. */
@@ -581,8 +593,8 @@ export class PlanStore {
     const r = manifestRange(this.manifest);
     if (!r) return undefined;
     return [
-      serviceDayStart(r.start),
-      serviceDayStart(addDays(r.end, 1)) + 4 * 3600_000,
+      serviceDayStart(r.start, this.tz),
+      serviceDayStart(addDays(r.end, 1), this.tz) + 4 * 3600_000,
     ];
   }
 
@@ -791,10 +803,10 @@ export class PlanStore {
     routes?: Set<string>,
     rtCorrections?: Map<ServiceDate, ScheduleCorrections>,
   ): VehicleState[] {
-    const today = localDate(t);
+    const today = localDate(t, this.tz);
     const out: VehicleState[] = [];
     for (const date of [addDays(today, -1), today]) {
-      const sec = (t - serviceDayStart(date)) / 1000;
+      const sec = (t - serviceDayStart(date, this.tz)) / 1000;
       if (sec < 0) continue;
       // The day before: only its trips still running.
       const pp = this.planFor(date, date === today ? 0 : sec);
@@ -866,12 +878,12 @@ export function mergeCorrections(
 }
 
 /**
- * The service date shown in the UI for an instant: times before 03:00 belong to the previous
- * service day, matching how the timetable (and riders) think about late-night trips.
+ * The service date shown in the UI for an instant, in a feed's time zone: times before 03:00 belong
+ * to the previous service day, matching how the timetable (and riders) think about late-night trips.
  */
 export const SERVICE_DAY_ROLLOVER_H = 3;
-export function displayServiceDate(t: number): ServiceDate {
-  return localDate(t - SERVICE_DAY_ROLLOVER_H * 3600_000);
+export function displayServiceDate(t: number, tz: string): ServiceDate {
+  return localDate(t - SERVICE_DAY_ROLLOVER_H * 3600_000, tz);
 }
 
 /** Each plan's places file, once loaded (`PlanStore.placesFor`). */

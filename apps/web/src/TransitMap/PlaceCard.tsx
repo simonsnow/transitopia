@@ -50,8 +50,14 @@ function markOf(d: Departure, live: boolean): Mark {
 }
 
 /** Live: "Now", "3 min" (first) or "9m" (later); otherwise clock times, no countdowns. */
-function timeText(d: Departure, now: number, live: boolean, first: boolean) {
-  if (!live) return clockMinutes(d.t);
+function timeText(
+  d: Departure,
+  now: number,
+  live: boolean,
+  first: boolean,
+  tz: string,
+) {
+  if (!live) return clockMinutes(d.t, tz);
   const m = Math.max(0, Math.round((d.t - now) / 60_000));
   if (m === 0) return "Now";
   return first ? `${m} min` : `${m}m`;
@@ -108,15 +114,17 @@ const GroupRow: React.FC<{
   group: PlaceGroup;
   now: number;
   live: boolean;
+  /** The time zone times are shown in (the snapshot's). */
+  tz: string;
   items: MenuItem[];
   colors: (r: PlanRoute) => RouteColors;
-}> = ({ group, now, live, items, colors }) => {
+}> = ({ group, now, live, tz, items, colors }) => {
   const [first, ...rest] = group.departures;
   const cancelled = group.departures.filter((d) => d.cancelled);
   const note = [
     platformsText(group.platforms, group.route.mode === "bus"),
     cancelled.length ?
-      `${cancelled.map((d) => clockMinutes(d.sched)).join(", ")} cancelled`
+      `${cancelled.map((d) => clockMinutes(d.sched, tz)).join(", ")} cancelled`
     : "",
   ]
     .filter(Boolean)
@@ -128,7 +136,7 @@ const GroupRow: React.FC<{
       {d.cancelled ? null : (
         <TimeMark mark={markOf(d, live)} size={isFirst ? "md" : "sm"} />
       )}
-      {timeText(d, now, live, isFirst)}
+      {timeText(d, now, live, isFirst, tz)}
     </span>
   );
   const content = (
@@ -360,6 +368,7 @@ const DepartureList: React.FC<{
       group={g}
       now={snap.t}
       live={snap.live}
+      tz={snap.timezone}
       items={itemsFor(g)}
       colors={colors}
     />
@@ -454,7 +463,7 @@ const PlaceCardBody: React.FC<{
         id: "route",
         label: `View route: ${g.route.label}`,
         lead: <RouteBadge route={g.route} colors={colors(g.route)} />,
-        onSelect: go({ kind: "route", id: g.route.key }),
+        onSelect: go({ kind: "route", feed: g.route.feed, id: g.route.key }),
       },
     ];
     const bay =
@@ -466,7 +475,7 @@ const PlaceCardBody: React.FC<{
         id: "stop",
         label: `View stop: ${bay.label}`,
         icon: "bus-stop",
-        onSelect: go({ kind: "stop", id: bay.id }),
+        onSelect: go({ kind: "stop", feed: place.feed, id: bay.id }),
       });
     // Where it ends, so a rider new to the route sees which way it goes (and a short turn's end).
     if (g.terminus)
@@ -484,7 +493,7 @@ const PlaceCardBody: React.FC<{
         id: "vehicle",
         label: `View ${VEHICLE[kind].noun}`,
         icon: VEHICLE[kind].icon,
-        note: `${toHeadsign(g.headsign)} · ${timeText(next, snap.t, snap.live, true)}`,
+        note: `${toHeadsign(g.headsign)} · ${timeText(next, snap.t, snap.live, true, snap.timezone)}`,
         onSelect: () => engine.open({ vehicle }, title),
       });
     }
@@ -523,7 +532,7 @@ const PlaceCardBody: React.FC<{
       id: `bay-${b.id}`,
       label: `Only ${b.label}`,
       icon: "bus-stop",
-      onSelect: go({ kind: "stop", id: b.id }),
+      onSelect: go({ kind: "stop", feed: place.feed, id: b.id }),
     })),
     {
       id: "share",
@@ -544,7 +553,7 @@ const PlaceCardBody: React.FC<{
   const when = (noun: string) =>
     snap.live ?
       `Next ${noun}`
-    : `${noun[0]!.toUpperCase()}${noun.slice(1)} after ${clockMinutes(snap.t)}`;
+    : `${noun[0]!.toUpperCase()}${noun.slice(1)} after ${clockMinutes(snap.t, snap.timezone)}`;
   return (
     <InfoCard
       tile={
@@ -574,7 +583,7 @@ const PlaceCardBody: React.FC<{
       chips={place.routes.toSorted(byRouteNumber).map((r) => ({
         label: isBus(r) ? routeName(r) : r.label,
         color: colors(r),
-        onSelect: go({ kind: "route", id: r.key }),
+        onSelect: go({ kind: "route", feed: r.feed, id: r.key }),
         action: `View route: ${r.label}`,
       }))}
       actions={actions}

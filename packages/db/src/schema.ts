@@ -18,11 +18,12 @@ type DateString = string;
 type Json<T> = ColumnType<T, string, string>;
 
 export interface Database {
-  regions: { id: string; name: string; timezone: string };
   operators: { id: string; name: string };
   feeds: { id: string; name: string; operator_id: string; timezone: string };
+  rail_networks: { id: string; name: string; timezone: string };
+  /** At most one row: the deployment's leader. */
   service_leader: {
-    region_id: string;
+    singleton: ColumnType<true, true | undefined, true>;
     instance: string;
     url: string | null;
     pid: number | null;
@@ -104,7 +105,7 @@ export interface Database {
   };
   observation_sets: {
     id: string;
-    region_id: string;
+    feed_id: string;
     state: ReviewState;
     title: string;
     body: Json<unknown>;
@@ -117,7 +118,7 @@ export interface Database {
   };
   disruptions: {
     id: string;
-    region_id: string;
+    network_id: string;
     state: ReviewState;
     body: Json<unknown>;
     dates: DateString[];
@@ -129,7 +130,7 @@ export interface Database {
     reviewed_at: Timestamp | null;
   };
   dispatch_versions: {
-    region_id: string;
+    network_id: string;
     service_date: DateString;
     version: string;
     kind: "live" | "preview";
@@ -180,7 +181,8 @@ export interface Database {
     computed_at: DefaultTimestamp;
   };
   // The feature registry (docs/DESIGN.md#feature-ids). `geom` is a PostGIS geography: write and
-  // read it with SQL (ST_MakePoint, ST_X), never as a value.
+  // read it with SQL (ST_MakePoint, ST_X), never as a value. It's a point (stations, exchanges,
+  // stops), or null (routes, vehicles, and bike routes, whose extent is in cycling_routes).
   features: {
     id: string;
     kind: FeatureKind;
@@ -225,6 +227,34 @@ export interface Database {
     resolved_by: number | null;
     created_at: DefaultTimestamp;
     resolved_at: Timestamp | null;
+  };
+  // Bike routes from the latest cycling build of each area (migrations/004_cycling_routes.sql).
+  cycling_builds: {
+    area: string;
+    osm_file: string;
+    osm_timestamp: Timestamp;
+    built_at: Timestamp;
+    loaded_at: DefaultTimestamp;
+  };
+  cycling_routes: {
+    area: string;
+    relation_id: number;
+    name: string | null;
+    ref: string | null;
+    network: string | null;
+    length_m: number;
+    /** Metres by comfort, 0 (no bike facility) to 4, ferries aside. */
+    comfort_m: number[];
+    /** Metres of ferry crossings, in length_m. */
+    ferry_m: Generated<number>;
+    /** [west, south, east, north]. */
+    bbox: number[] | null;
+  };
+  cycling_route_members: {
+    area: string;
+    parent: number;
+    child: number;
+    position: number;
   };
   job_runs: {
     job: string;

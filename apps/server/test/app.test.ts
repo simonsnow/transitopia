@@ -48,7 +48,7 @@ describe("disruptionProblems", () => {
 });
 
 describe("the real-time API", () => {
-  it("routes /rt/* and /regions/*, and answers a matching If-None-Match with a 304", async () => {
+  it("routes the public real-time endpoints and answers a matching If-None-Match with a 304", async () => {
     const paths: string[] = [];
     const service = {
       handle: async (path: string) => {
@@ -65,11 +65,13 @@ describe("the real-time API", () => {
       auth: {},
       env: { allowedOrigins: [] },
     } as unknown as AppDeps);
-    const full = await app.request("/regions/r/live/transit");
+    const full = await app.request("/feeds/f/live");
+    const legacy = await app.request("/regions/r/live/transit");
     expect(full.status).toBe(200);
+    expect(legacy.status).toBe(200);
     expect(await full.text()).toBe("{}");
     // As it comes back through a proxy that compressed the body.
-    const same = await app.request("/regions/r/live/transit", {
+    const same = await app.request("/feeds/f/live", {
       headers: { "If-None-Match": 'W/"abc123-gzip"' },
     });
     expect(same.status).toBe(304);
@@ -78,10 +80,13 @@ describe("the real-time API", () => {
       headers: { "If-None-Match": 'W/"def456"' },
     });
     expect(changed.status).toBe(200);
+    await app.request("/networks/n/live/dispatch");
     expect(paths).toEqual([
+      "/feeds/f/live",
       "/regions/r/live/transit",
-      "/regions/r/live/transit",
+      "/feeds/f/live",
       "/rt/status",
+      "/networks/n/live/dispatch",
     ]);
   });
 });

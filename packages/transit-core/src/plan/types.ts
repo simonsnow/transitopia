@@ -10,7 +10,13 @@ export type RouteKind = "skytrain" | "shape" | "bus";
 export type RouteMode = "skytrain" | "ferry" | "rail" | "bus";
 
 export interface PlanRoute {
-  /** Unique in the plan; what config, URLs and the map name it by (plan/routes.ts → `selectRoutes`). */
+  /**
+   * The feed it's from (ServicePlan.feed): route keys are unique only within a feed, so the browser
+   * names a route by both (packages/transit-map/README.md#feeds). Not published per route: the
+   * plan names its feed once, and `decodeCore` sets it.
+   */
+  feed: string;
+  /** Unique within the feed; what config, URLs and the map name it by (plan/routes.ts → `selectRoutes`). */
   key: string;
   /**
    * What riders call it ("1"): the key, without the agency a feed of several qualifies it with
@@ -32,6 +38,11 @@ export interface PlanRoute {
   textColor: string;
   gtfsRouteId: string;
   /**
+   * Other GTFS routes drawn as this one, where its routes.json entry matches several (Hullo's one
+   * route per direction). Absent for most routes; every GTFS route of it is `gtfsRouteIds`.
+   */
+  mergedGtfsRouteIds?: string[] | undefined;
+  /**
    * Dataset registry id of the feed it comes from (@transitopia/shared/datasets.ts), for credits.
    * Absent in plans built before it: hosts pass a default (TransitEngineOptions.dataset).
    */
@@ -49,6 +60,13 @@ export interface PlanRoute {
    * (km/h, schedule/stops.ts → `weekdaySpeedRange`). Set when the plan is published.
    */
   weekdaySpeed?: [number, number] | undefined;
+}
+
+/** Every GTFS route a route is drawn for: its own and any merged into it. */
+export function gtfsRouteIds(
+  r: Pick<PlanRoute, "gtfsRouteId" | "mergedGtfsRouteIds">,
+): string[] {
+  return [r.gtfsRouteId, ...(r.mergedGtfsRouteIds ?? [])];
 }
 
 export interface PlanStop {
@@ -399,7 +417,7 @@ export interface FeedManifestEntry {
   movements?: string;
 }
 
-/** One feed's built versions: data/feeds/<feed>/manifest.json (docs/DESIGN.md#regions-and-feeds). */
+/** One feed's built versions: data/feeds/<feed>/manifest.json (docs/DESIGN.md#feeds-operators-and-rail-networks). */
 export interface FeedManifest {
   schema: 1;
   generatedAt: string;
@@ -429,12 +447,12 @@ export function feedDataPath(
   return parts.join("/");
 }
 
-/** Where a region's published files live (infra, observations, dispatch, scenarios), relative to the data root. */
-export function regionDataPath(region: string, file?: string): string {
+/** Where a rail network's published files live (infra, dispatch, scenarios), relative to the data root. */
+export function networkDataPath(network: string, file?: string): string {
   return [
     "data",
-    "regions",
-    region,
+    "networks",
+    network,
     ...(file === undefined ? [] : [file]),
   ].join("/");
 }

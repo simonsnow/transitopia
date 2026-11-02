@@ -1,8 +1,7 @@
 // Build the compact service plan for each archived version of each feed, and each feed's manifest.
 // Input:  var/raw/gtfs/<feed>/<version dir>/google_transit.zip, config/feeds/<feed>/{feed,routes}.json,
 //         its operator's config/operators/<id>/operator.json (the name plans record),
-//         and for a region showing the feed with SeaBus berths and lanes:
-//         config/regions/<region>/infrastructure/seabus.json + config/regions/<region>/seabus.json,
+//         and where the feed has ferry berths and lanes: config/feeds/<feed>/ferries/<route>.json,
 //         and the feed's OSM roads when fetched (var/raw/osm-roads/<feed>/latest.json, fetch-osm-roads):
 //         bus shapes are matched to them and bus corridors built (packages/transit-core/DESIGN.md#bus-corridors)
 // Output: var/public/data/feeds/<feed>/<version dir>/plan.json and its parts beside it (shapes,
@@ -23,17 +22,14 @@ import { join } from "node:path";
 import { readCsv, readCsvAll, type Row } from "@transitopia/data/gtfs-zip.ts";
 import {
   OPERATORS_DIR,
-  REGIONS_DIR,
   exists,
   feedPaths,
   log,
-  readConfig,
   readFeed,
   readFeedRoutes,
+  readFerries,
   readFeeds,
-  readJson,
   readOperator,
-  readRegions,
   writeJson,
 } from "@transitopia/data/paths.ts";
 import { readPlanCore, writePlan } from "@transitopia/data/plans.ts";
@@ -67,10 +63,7 @@ import {
   roadCoords,
 } from "@transitopia/transit-core/plan/corridors.ts";
 import { corridorPaths } from "@transitopia/transit-core/plan/paths.ts";
-import {
-  applyFerryBerths,
-  type FerryInfra,
-} from "@transitopia/transit-core/plan/ferry-berths.ts";
+import { applyFerryBerths } from "@transitopia/transit-core/plan/ferry-berths.ts";
 import type {
   CalendarEntry,
   CalendarException,
@@ -88,6 +81,7 @@ import {
   type ServicePlan,
 } from "@transitopia/transit-core/plan/types.ts";
 import {
+  gtfsRouteIds,
   LINE_DECIMALS,
   STOP_NO_DROPOFF,
   STOP_NO_PICKUP,
@@ -126,23 +120,6 @@ const STOP_OFFSET_WARN_M = 150;
  * routes can be lines only (`vehicles: false`).
  */
 const PLAN_FORMAT = 21;
-
-/**
- * Regions with SeaBus berths and lanes (infrastructure/seabus.json) whose primary feed this is:
- * build-schedule applies them. A region's overlay feeds (docs/DESIGN.md#overlay-feeds) aren't its SeaBus.
- */
-async function ferryRegions(feed: string): Promise<string[]> {
-  const out: string[] = [];
-  for (const r of await readRegions())
-    if (
-      r.feeds[0] === feed
-      && (await exists(
-        join(REGIONS_DIR, r.id, "infrastructure", "seabus.json"),
-      ))
-    )
-      out.push(r.id);
-  return out;
-}
 
 const roadsFile = (feed: string) => join(feedPaths(feed).roads, "latest.json");
 
@@ -188,11 +165,7 @@ async function inputsHash(feed: string): Promise<string> {
     join(feedPaths(feed).dir, "routes.json"),
     join(OPERATORS_DIR, info.operator, "operator.json"),
   ];
-  for (const r of await ferryRegions(feed))
-    files.push(
-      join(REGIONS_DIR, r, "infrastructure", "seabus.json"),
-      join(REGIONS_DIR, r, "seabus.json"),
-    );
+  files.push(...(await readFerries(feed)).map((f) => f.path));
   for (const f of files) h.update(await readFile(f));
   h.update(`roads ${(await roadsStamp(feed)) ?? "none"}\n`);
   return h.digest("hex").slice(0, 16);
@@ -217,12 +190,15 @@ export async function buildPlan(
 
   const [info] = await readCsvAll(zipPath, "feed_info.txt");
   if (!info) throw new Error("feed_info.txt missing");
-  // Service days and times are computed in TIMEZONE (packages/transit-core/src/time.ts), so every
-  // feed has to be in it until regions carry their own (docs/DESIGN.md#regions-and-feeds).
-  // A GTFS stating the wrong zone says so in feed.json (static.statedTimezone).
+  // Service days use the feed's time zone. The engine currently supports TIMEZONE only
+  // (packages/transit-core/src/time.ts); statedTimezone records a GTFS agency zone known to differ.
   const stated = feed.static.statedTimezone ?? feed.timezone;
+  if (feed.timezone !== TIMEZONE)
+    throw new Error(
+      `${feed.id}: feed time zone ${feed.timezone}; only ${TIMEZONE} is supported`,
+    );
   for (const a of await readCsvAll(zipPath, "agency.txt"))
-    if (a.agency_timezone !== stated || feed.timezone !== TIMEZONE)
+    if (a.agency_timezone !== stated)
       throw new Error(
         `${feed.id}: agency ${a.agency_name} is in ${a.agency_timezone} and the feed says ${stated}; only ${TIMEZONE} is supported`,
       );
@@ -231,6 +207,7 @@ export async function buildPlan(
   const selected = selectRoutes(
     await readCsvAll(zipPath, "routes.txt"),
     routeCfg,
+    feed.id,
     gtfsDataset,
   );
   for (const { row, reason } of selected.skipped)
@@ -239,7 +216,9 @@ export async function buildPlan(
     );
   for (const c of selected.unmatched)
     log(`  warn: routes.json entry ${c.key} matches no route in this feed`);
-  const routeByGtfsId = new Map(selected.routes.map((r) => [r.gtfsRouteId, r]));
+  const routeByGtfsId = new Map(
+    selected.routes.flatMap((r) => gtfsRouteIds(r).map((id) => [id, r])),
+  );
 
   // Trips on those routes.
   interface RawTrip {
@@ -543,7 +522,7 @@ export async function buildPlan(
     feedVersion: info.feed_version!,
     feedStart: serviceDate(info.feed_start_date!),
     feedEnd: serviceDate(info.feed_end_date!),
-    timezone: TIMEZONE,
+    timezone: feed.timezone,
     builtAt: new Date().toISOString(),
     routes,
     stops,
@@ -578,24 +557,17 @@ export async function buildPlan(
     );
   }
 
-  // SeaBus: berth-to-berth paths along the keep-right lanes instead of the GTFS shapes.
-  for (const region of await ferryRegions(feed.id)) {
-    const infra = await readJson<FerryInfra>(
-      join(REGIONS_DIR, region, "infrastructure", "seabus.json"),
-    );
+  // Ferries (the SeaBus, Hullo): berth-to-berth paths along their lanes instead of the GTFS shapes.
+  for (const { ferry: infra } of await readFerries(feed.id)) {
     if (!plan.routes.some((r) => r.key === infra.route)) continue;
-    const ferry = applyFerryBerths(
-      plan,
-      infra,
-      await readConfig("seabus", region),
-    );
+    const ferry = applyFerryBerths(plan, infra);
     if (ferry.sharedBerthS > 0)
       log(
-        `  warn: SeaBus vessels are docked at the same berth for ${ferry.sharedBerthS} s`,
+        `  warn: ${infra.route} vessels are docked at the same berth for ${ferry.sharedBerthS} s`,
       );
-    else
+    else if (Number.isFinite(ferry.minBerthGapS))
       log(
-        `  SeaBus: one berth pair for all vessels; berths free for ≥ ${Math.round(ferry.minBerthGapS / 60)} min between vessels`,
+        `  ${infra.route}: one berth pair for all vessels; berths free for ≥ ${Math.round(ferry.minBerthGapS / 60)} min between vessels`,
       );
   }
   return plan;

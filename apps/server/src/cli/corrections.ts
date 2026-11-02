@@ -1,14 +1,18 @@
 // Corrections in the database, as files (docs/DESIGN.md#corrections-and-previews), e.g. for tests and
 // reproducible bug reports. /admin is where they're reviewed; this is for moving them around.
 //
-//   DATABASE_URL=… npm run corrections -- export <dir>   # confirmed ones → <dir>/{observations,disruptions}/*.json
-//   DATABASE_URL=… npm run corrections -- import [<dir>] # files → database (default: config/regions/metro-vancouver); existing ids are kept
-//   npm run corrections -- pull [<api>] [<dir>]          # a server's confirmed ones (admin token in ADMIN_TOKEN) → <dir>
+//   npm run corrections -- export <dir>          # confirmed ones → <dir>, laid out like config/ (below)
+//   npm run corrections -- import [<dir>]        # files → database (default: config/); existing ids are kept
+//   npm run corrections -- pull [<api>] [<dir>]  # a server's confirmed ones (admin token in ADMIN_TOKEN) → <dir>
+//
+// They're the rail network's (railNetwork): its feed's observations in <dir>/feeds/<feed>/observations/
+// and its disruptions in <dir>/networks/<network>/disruptions/ (correctionPaths). export and import
+// use DATABASE_URL, else the local database (npm run db:up).
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { railNetwork } from "@transitopia/data/paths.ts";
-import { createDb } from "@transitopia/db/connect.ts";
+import { correctionPaths, railNetwork } from "@transitopia/data/paths.ts";
+import { createDb, databaseUrl } from "@transitopia/db/connect.ts";
 import { migrate } from "@transitopia/db/migrate.ts";
 import { CorrectionsRepo } from "../corrections.ts";
 
@@ -34,11 +38,12 @@ if (cmd === "pull") {
     observations: Record<string, unknown>;
     disruptions: Record<string, unknown>;
   };
-  for (const [kind, files] of Object.entries(body)) {
-    await mkdir(join(dir, kind), { recursive: true });
-    for (const [id, file] of Object.entries(files))
+  const paths = correctionPaths(await railNetwork(), dir);
+  for (const kind of ["observations", "disruptions"] as const) {
+    await mkdir(paths[kind], { recursive: true });
+    for (const [id, file] of Object.entries(body[kind]))
       await writeFile(
-        join(dir, kind, `${id}.json`),
+        join(paths[kind], `${id}.json`),
         JSON.stringify(file, null, 2) + "\n",
       );
   }
@@ -46,12 +51,9 @@ if (cmd === "pull") {
     `${Object.keys(body.observations).length} observation sets and ${Object.keys(body.disruptions).length} disruptions → ${dir}`,
   );
 } else if (cmd === "export" || cmd === "import") {
-  const url = process.env.DATABASE_URL;
-  if (!url) usage();
-  const { db, pool } = createDb(url!);
+  const { db, pool } = createDb(databaseUrl());
   await migrate(pool);
-  // Corrections are the rail network's region's (railNetwork).
-  const repo = new CorrectionsRepo(db, (await railNetwork()).region);
+  const repo = new CorrectionsRepo(db, await railNetwork());
   if (cmd === "export") {
     if (!a) usage();
     const n = await repo.exportFiles(a!);
@@ -59,10 +61,7 @@ if (cmd === "pull") {
       `${n.observationSets} observation sets and ${n.disruptions} disruptions → ${a}`,
     );
   } else {
-    const n =
-      a ?
-        await repo.importFiles(join(a, "observations"), join(a, "disruptions"))
-      : await repo.importFiles();
+    const n = await repo.importFiles(a);
     console.log(
       `imported ${n.observationSets} observation sets and ${n.disruptions} disruptions`,
     );
