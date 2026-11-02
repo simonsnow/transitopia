@@ -1,5 +1,5 @@
-// The server with PostgreSQL: recording every route, the request ledger across restarts, leader
-// election, corrections and the admin API. Skipped without TEST_DATABASE_URL (infra/compose.dev.yml).
+// The server with PostgreSQL: recording every route, the request ledger across restarts and its
+// daily cap, leader election, corrections and the admin API. Skipped without TEST_DATABASE_URL (infra/compose.dev.yml).
 
 import {
   afterAll,
@@ -25,7 +25,7 @@ import { Store } from "../src/store.ts";
 import { PgLeaderLock } from "../src/leader.ts";
 import { CorrectionsRepo } from "../src/corrections.ts";
 import { Auth } from "../src/auth.ts";
-import { createApp } from "../src/app.ts";
+import { createApp, health, type AppDeps } from "../src/app.ts";
 import { readEnv } from "../src/env.ts";
 import type { Disruption } from "@transitopia/transit-core/disruption/types.ts";
 import type { RtSnapshot } from "@transitopia/transit-core/rt/types.ts";
@@ -35,7 +35,7 @@ import {
 } from "@transitopia/shared/admin-api.ts";
 
 const { FeedMessage } = GtfsRealtimeBindings.transit_realtime;
-const REGION = "metro-vancouver";
+const RAIL = { network: "skytrain", feed: "translink" };
 
 function positionsFeed(): Uint8Array {
   const now = Math.floor(Date.now() / 1000);
@@ -93,22 +93,24 @@ describe.skipIf(!TEST_DATABASE_URL)("server with a database", () => {
   afterEach(async () => {
     await Promise.all(services.splice(0).map((s) => s.stop()));
     vi.unstubAllGlobals();
+    // Each test starts with an unspent budget.
+    await t.db.deleteFrom("upstream_requests").execute();
     if (dir) await rm(dir, { recursive: true, force: true });
   });
 
-  const newService = async (lock?: PgLeaderLock) => {
+  const newService = async (lock?: PgLeaderLock, record = true) => {
     const s = new RtService({
       historyDir: dir,
+      record,
       log: () => {},
       apiKey: "test-key",
       aisApiKey: null,
       dispatch: false,
-      disruptionsDir: dir,
-      store: new Store(t.db, REGION),
+      store: new Store(t.db),
       leaderLock: lock,
     });
     services.push(s);
-    await s.start(0);
+    await s.start();
     return s;
   };
 
@@ -179,19 +181,72 @@ describe.skipIf(!TEST_DATABASE_URL)("server with a database", () => {
     ).toBeGreaterThan(0);
   });
 
+  /** Requests a previous leader made, as the ledger records them. */
+  const requested = (requests: [number, string][]) =>
+    t.db
+      .insertInto("upstream_requests")
+      .values(
+        requests.map(([ts, feed]) => ({
+          provider: "translink",
+          feed,
+          ts: new Date(ts),
+        })),
+      )
+      .execute();
+  const status = async (service: RtService) =>
+    JSON.parse(
+      String((await service.handle("/rt/status", new URLSearchParams())).body),
+    );
+
+  it("stops polling at the daily cap", async () => {
+    dir = await mkdtemp(join(tmpdir(), "rt-db-"));
+    const hourAgo = Date.now() - 3_600_000;
+    await requested(
+      Array.from({ length: 1000 }, (_, i) => [hourAgo + i, "positions"]),
+    );
+    const upstream = vi.fn();
+    vi.stubGlobal("fetch", upstream);
+    const service = await newService(undefined, false);
+    await vi.waitFor(async () =>
+      expect((await status(service)).providers.translink.budget.capped).toBe(
+        true,
+      ),
+    );
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it("passes health after a restart until trip updates are due", async () => {
+    dir = await mkdtemp(join(tmpdir(), "rt-db-"));
+    // The previous leader polled everything 10 s ago, so this one continues the schedule from there.
+    const before = Date.now() - 10_000;
+    await requested([
+      [before, "tripUpdates"],
+      [before, "positions"],
+      [before, "alerts"],
+    ]);
+    const upstream = vi.fn();
+    vi.stubGlobal("fetch", upstream);
+    const service = await newService(undefined, false);
+    const h = await health({ service, db: t.db } as unknown as AppDeps);
+    expect(upstream).not.toHaveBeenCalled();
+    expect(h.checks["database"]?.ok).toBe(true);
+    expect(h.checks["translink/tripUpdates"]?.ok).toBe(true);
+    expect(h.checks["translink/tripUpdates"]?.detail).toMatch(
+      /no successful poll since polling started \d+ s ago \(limit \d+ s\); next poll in \d+ s/,
+    );
+  });
+
   it("elects one leader, and a follower forwards to it and takes over when it goes", async () => {
     const onLost = vi.fn();
     const a = new PgLeaderLock({
       url: t.url,
       db: t.db,
-      regionId: REGION,
       advertiseUrl: "http://a:8787",
       onLost,
     });
     const b = new PgLeaderLock({
       url: t.url,
       db: t.db,
-      regionId: REGION,
       advertiseUrl: "http://b:8787",
       onLost,
     });
@@ -208,7 +263,7 @@ describe.skipIf(!TEST_DATABASE_URL)("server with a database", () => {
   });
 
   it("keeps a person's decision over an alert's draft, and applies only confirmed corrections", async () => {
-    const repo = new CorrectionsRepo(t.db, REGION);
+    const repo = new CorrectionsRepo(t.db, RAIL);
     const draft: Disruption = {
       id: "alert-1",
       source: "TransLink alert",
@@ -260,10 +315,9 @@ describe.skipIf(!TEST_DATABASE_URL)("server with a database", () => {
       apiKey: null,
       aisApiKey: null,
       dispatch: false,
-      disruptionsDir: dir,
     });
     services.push(service);
-    const repo = new CorrectionsRepo(t.db, REGION);
+    const repo = new CorrectionsRepo(t.db, RAIL);
     const app = createApp({
       service,
       auth: new Auth(t.db, env),

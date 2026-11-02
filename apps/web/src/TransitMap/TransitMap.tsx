@@ -103,7 +103,7 @@ interface RegionState {
 }
 
 /**
- * The region the engine shows (docs/DESIGN.md#regions-and-feeds): the one in view, or while the
+ * The region the engine shows (docs/DESIGN.md#feeds-operators-and-rail-networks): the one in view, or while the
  * view is outside every region, the last one shown (at first, the default). Its engine runs only
  * zoomed in to ENGINE_MIN_ZOOM; further out, the overview shows every region.
  */
@@ -149,10 +149,9 @@ function useRegion(map: MapType | undefined): RegionState {
 const OVERVIEW_SOURCE = "transitopia-transit-overview";
 
 /** What the overview draws: every region's feed. */
-const OVERVIEW_DATASETS = REGIONS.flatMap((r) => [
-  r.config.feed.dataset,
-  ...(r.config.overlays ?? []).map((o) => o.feed.dataset),
-]);
+const OVERVIEW_DATASETS = REGIONS.flatMap((r) =>
+  r.feeds.map((f) => f.feed.dataset),
+);
 
 /**
  * Every region's routes zoomed out (packages/transit-core/DESIGN.md#overview-tiles), below the zoom
@@ -249,7 +248,7 @@ export default function TransitMap() {
     let cancelled = false;
     let created: TransitEngine | undefined;
     const params = new URLSearchParams(location.search);
-    const { select: _s, ...time } = readUrl();
+    const { select: _s, ...time } = readUrl(region.feeds[0]!.feed.timezone);
     // A key carried for this region is used once its engine starts; one for another region (the
     // user panned elsewhere first) is dropped.
     const select =
@@ -263,12 +262,10 @@ export default function TransitMap() {
     TransitEngine.create(map, {
       dataBase: transitData,
       apiBase: transitApi,
-      region: region.info.id,
       theme: themeRef.current,
       scenario: params.get("scenario") ?? undefined,
       debug: params.has("debug"),
-      dataset: region.config.feed.dataset,
-      config: region.config,
+      feeds: region.feeds,
       onRebuilt: () => setBuild((b) => b + 1),
       ...(switched ?
         { initial: { ...time, ...(select ? { select } : {}) } }

@@ -1,21 +1,21 @@
-// Browser side of the live endpoint (packages/transit-core/src/rt/live.ts, apps/server/README.md#live-endpoint):
-// while the clock is near now, one poll of GET /regions/<id>/live/transit serves buses, SeaBus AIS,
-// service changes and live dispatch. It waits for the server's nextAt (within clientPollS and
+// Browser side of the live endpoints (packages/transit-core/src/rt/live.ts, apps/server/README.md#live-endpoints):
+// while the clock is near now, each feed slot polls GET /feeds/<id>/live (buses, service changes,
+// AIS) and the engine polls GET /networks/<id>/live/dispatch for each rail network. It waits for the server's nextAt (within clientPollS and
 // clientPollMaxS), and hands a response on only when it differs from the last one: the browser
 // revalidates with the ETag, so an unchanged poll costs a 304.
 
 import {
   LIVE_SCHEMA,
-  type LiveTransitResponse,
+  type LiveResponse,
 } from "@transitopia/transit-core/rt/live.ts";
-import type { RegionConfig } from "./config.ts";
+import type { FeedConfig } from "./config.ts";
 
 /** Live mode applies when the clock is within this of wall-clock time. */
 export const LIVE_WINDOW_MS = 10 * 60_000;
 
 export interface LiveHandlers {
   /** A response that differs from the previous one (receivedAt: epoch ms). */
-  onResponse(r: LiveTransitResponse, receivedAt: number): void;
+  onResponse(r: LiveResponse, receivedAt: number): void;
   /** A poll failed; `missing` when there's no live endpoint at all (polling stops for good). */
   onError(error: string, missing: boolean): void;
   /** Polling stopped (the clock left the present): pointers in the last response may go stale. */
@@ -29,13 +29,13 @@ export class LivePoller {
   /** Epoch ms of the last successful poll, changed or not. */
   lastOkAt = 0;
   private readonly url: string | undefined;
-  private readonly cfg: RegionConfig["rt"];
+  private readonly cfg: FeedConfig["rt"];
   private readonly handlers: LiveHandlers;
 
   /** @param url the live endpoint, or undefined for schedules only. */
   constructor(
     url: string | undefined,
-    cfg: RegionConfig["rt"],
+    cfg: FeedConfig["rt"],
     handlers: LiveHandlers,
   ) {
     this.url = url;
@@ -82,7 +82,7 @@ export class LivePoller {
       if (!res.ok) throw new Error(String(res.status));
       const text = await res.text();
       this.lastOkAt = Date.now();
-      const r = JSON.parse(text) as LiveTransitResponse;
+      const r = JSON.parse(text) as LiveResponse;
       if (r.schema !== LIVE_SCHEMA)
         throw new Error(`schema ${String(r.schema)}`);
       if (text !== this.last) {

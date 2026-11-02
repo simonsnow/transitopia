@@ -63,8 +63,8 @@ avoid that ([#8](https://github.com/transitopia/transitopia/issues/8)).
 ### Transit data (data.transitopia.org)
 
 `/transit` reads its published data (each feed's `data/feeds/<feed>/manifest.json`, plans, movements,
-and each region's `data/regions/<id>/` track network and dispatch patches;
-[docs/DESIGN.md → Regions and feeds](../docs/DESIGN.md#regions-and-feeds)) from `https://data.transitopia.org/`.
+each feed's observations, and each rail network's `data/networks/<id>/` track and dispatch patches;
+[docs/DESIGN.md → Feeds, operators and rail networks](../docs/DESIGN.md#feeds-operators-and-rail-networks)) from `https://data.transitopia.org/`.
 Uploads copy, never sync, so files a build no longer writes stay until deleted by hand. The server builds it daily (its `data` job, at
 `dataBuildAt` in `config/server/recording.json`) and uploads it to the R2 bucket
 `transitopia-data`, so its live dispatch patches fit the published plans.
@@ -94,7 +94,7 @@ One-time setup (done):
    headers, and the files must go up compressed. The upload passes `--no-update-modtime`: when only
    a file's time changed, rclone otherwise updates it by copying the object onto itself with new
    metadata, which drops the headers too.
-4. Compression: the upload compresses every JSON and GeoJSON file with brotli at its highest
+4. Compression: the upload compresses every JSON, GeoJSON and `.bin` (bus profile) file with brotli at its highest
    quality (`apps/server/src/jobs/publish.ts`; staged in `var/publish/data`, recompressed only when
    the file changes) and stores it with `Content-Encoding: br` and `Cache-Control: …, no-transform`,
    so the edge serves our copy as it is instead of compressing the plain file itself, which it does
@@ -240,7 +240,7 @@ downloads recorded hours for that range from the archive bucket (the last 60 day
 have statistics and observed stop times but no raw fixes), and with `--db` restores the nightly
 developer snapshot: every table except users, sessions and raw rows (the feature registry included); then
 `npm run db:import-history` adds the pulled hours' positions and AIS fixes.
-Without it, `npm run features -- pull` (after `npm run db:up`, or with no database at all) loads the
+Without it, `npm run features -- pull` (after `npm run db:up`) loads the
 public registry export, so local places files carry production's IDs ([docs/DESIGN.md → Published features](../docs/DESIGN.md#published-features)). It needs rclone access to
 `transitopia-archive`. Snapshots stay private to the team until each source's terms allow
 publishing them ([DATA-LICENSES.md](../DATA-LICENSES.md)).

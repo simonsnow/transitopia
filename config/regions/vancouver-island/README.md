@@ -4,7 +4,7 @@ A bus-only region showing BC Transit's eleven transit systems on Vancouver Islan
 
 | Path | What |
 |---|---|
-| `region.json` | bbox (Victoria to Port Hardy, Tofino to Gibsons), its `areas` (two rectangles round Metro Vancouver's bbox), time zone, the first view of `/transit` (Victoria), time zone data checks, and its feed |
+| `region.json` | bbox (Victoria to Port Hardy, Tofino to Gibsons), its `areas` (two rectangles round Metro Vancouver's bbox), the first view of `/transit` (Victoria), and its feeds |
 | Settings | None of its own yet: vehicles and real-time use come from [config/defaults/](../../defaults/) and BC Transit's [operator.json](../../operators/bc-transit/operator.json), each with a source or "guess" and a cross-reference to [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) |
 
 ## Systems

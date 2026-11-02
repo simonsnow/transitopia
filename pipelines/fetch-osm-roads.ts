@@ -1,9 +1,9 @@
 // Download the roads a feed's buses can use from OpenStreetMap via Overpass, for matching bus shapes
 // to streets in build-schedule (packages/transit-core/DESIGN.md#bus-corridors): every public road
 // class, busways, service roads open to buses, and service roads near bus stops (exchange loops are
-// often plain service roads). The area is the bbox of the regions showing the feed and of the feed's
-// own stops (newest archived GTFS), so routes that run past a region's edge (regions don't overlap,
-// docs/DESIGN.md#regions-and-feeds) are still matched to streets. Saved with a date
+// often plain service roads). The area is the bbox of the regions showing the feed and its stops in
+// the newest archived GTFS, so routes that run past a region's edge are still matched to streets.
+// Saved with a date
 // so builds are reproducible: var/raw/osm-roads/<feed>/YYYY-MM-DD.json (and latest.json).
 //
 //   tsx pipelines/fetch-osm-roads.ts [--feed <id>]   (default: every feed)

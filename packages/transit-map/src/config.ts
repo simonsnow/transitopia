@@ -1,28 +1,19 @@
-// The region config the engine runs with (packages/transit-core/src/config.ts). The host passes it
-// in (TransitEngineOptions.config), checked with parseConfig and parseFeed: the engine knows no
-// region of its own.
+// A feed's config, as the engine runs it (packages/transit-core/src/config.ts). The host passes one
+// per feed (TransitEngineOptions.feeds), checked with parseConfig, parseFeed and parseNetwork: the
+// engine knows no feed of its own.
 
 import type { Config, FeedInfo } from "@transitopia/transit-core/config.ts";
 
-/** An overlay feed and its vehicles' settings (resolved from the defaults, its operator and the feed). */
-export interface OverlayConfig {
+export interface FeedConfig {
   feed: FeedInfo;
-  kinematics: Config<"kinematics">;
-}
-
-export interface RegionConfig {
+  /** Its vehicles' settings, resolved from the defaults, its operator, the feed and its routes. */
   kinematics: Config<"kinematics">;
   rt: Config<"rt">;
-  /** The region's primary feed (region.json → feeds, the first): buses, rail, real time, cards. */
-  feed: FeedInfo;
   /**
-   * The other feeds it shows, drawn over the primary's (docs/DESIGN.md#overlay-feeds): timetable
-   * routes along their shapes, such as BC Ferries' sailings, each with its own vehicle settings.
+   * Track-level rail, where the feed runs on a rail network (config/networks/<id>/network.json →
+   * feeds): the network's id and its run inference settings. Then the engine loads the network's
+   * tracks and dispatch patches and the feed's movements and observations. Absent: timetables and
+   * real time only.
    */
-  overlays?: OverlayConfig[] | undefined;
-  /**
-   * Track-level rail (run inference settings), in a region that has it: then the engine loads the
-   * region's tracks, movements, dispatch patches and observations. Absent: timetables and real time only.
-   */
-  operations?: Config<"operations"> | undefined;
+  rail?: { network: string; operations: Config<"operations"> } | undefined;
 }

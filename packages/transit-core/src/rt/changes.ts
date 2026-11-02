@@ -1,5 +1,5 @@
 // Service changes TransLink publishes in GTFS-RT for our bus routes, collected per service date by
-// the RT service (apps/server/src/rt/changes.ts) and served at /regions/<id>/days/<YYYYMMDD>/translink/changes (versioned, the live endpoint points to the current version):
+// the RT service (apps/server/src/rt/changes.ts) and served at /feeds/<feed>/days/<YYYYMMDD>/changes (versioned, the feed's live endpoint points to the current version):
 //  - cancelled trips (TripUpdates schedule_relationship CANCELED). The feed drops a trip once its
 //    time has passed, so only a recording keeps them for replaying the day. Seen 2026-09-29: some
 //    list only their remaining stops as skipped (cancelled part-way, "resuming at Lonsdale Quay");
@@ -11,7 +11,7 @@
 //    its alert). Those listing stops ("resuming service at Lonsdale Quay") skip just those stops;
 //  - DETOUR alerts. They name the route (and direction or trip) and the affected stops; the detour
 //    path is only in the text ("via Gilmore Ave, Lougheed Hwy, ..."), so it isn't drawn.
-// See config/regions/metro-vancouver/OPEN-QUESTIONS.md #28.
+// See config/feeds/translink/OPEN-QUESTIONS.md #28.
 
 import type { ServiceDate } from "../time.ts";
 

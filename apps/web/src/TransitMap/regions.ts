@@ -1,19 +1,21 @@
-// The regions /transit can show, found in config/ (docs/DESIGN.md#regions-and-feeds), each with its
-// feed and that feed's settings resolved from the defaults, its operator and the region
-// (packages/transit-core/src/config.ts), checked as the transit chunk loads. Adding a region is data
-// only. The map shows one region at a time: the one in view (TransitMap.tsx).
+// The regions /transit can show, found in config/ (docs/DESIGN.md#feeds-operators-and-rail-networks),
+// each with its feeds, their settings resolved from the defaults and their operators
+// (packages/transit-core/src/config.ts), and the rail networks they run on, if any; checked as the
+// transit chunk loads. Adding a region is data only. The map shows one region at a time, every feed
+// it lists at once: the one in view (TransitMap.tsx).
 
 import {
   parseConfig,
   parseFeed,
+  parseNetwork,
   parseOperator,
   parseRegion,
-  parseRegionRt,
   resolveKinematics,
   resolveRt,
+  type NetworkInfo,
   type RegionInfo,
 } from "@transitopia/transit-core/config.ts";
-import type { RegionConfig } from "@transitopia/transit-map/engine.ts";
+import type { FeedConfig } from "@transitopia/transit-map/engine.ts";
 
 /** Where /transit opens without a map position. */
 const DEFAULT_REGION_ID = "metro-vancouver";
@@ -25,8 +27,8 @@ const regionFiles: Files = import.meta.glob(
   "../../../../config/regions/*/region.json",
   { eager: true, import: "default" },
 );
-const regionSettings: Files = import.meta.glob(
-  "../../../../config/regions/*/{rt,operations}.json",
+const networkFiles: Files = import.meta.glob(
+  "../../../../config/networks/*/{network,operations}.json",
   { eager: true, import: "default" },
 );
 const feedFiles: Files = import.meta.glob(
@@ -58,11 +60,16 @@ function defaultsFile(name: string): unknown {
 
 export interface SiteRegion {
   info: RegionInfo;
-  config: RegionConfig;
+  /** Its feeds' configs (region.json → feeds), for the engine (TransitEngineOptions.feeds). */
+  feeds: FeedConfig[];
 }
 
-/** A feed, its operator, and its vehicles' settings resolved from the defaults, operator and feed. */
-function feedConfig(feedId: string) {
+function siteRegion(info: RegionInfo): SiteRegion {
+  return { info, feeds: info.feeds.map(feedConfig) };
+}
+
+/** A feed's config, with its operator's and the defaults' settings and its rail network, if any. */
+function feedConfig(feedId: string): FeedConfig {
   const feed = parseFeed(file(feedFiles, "feeds", feedId, "feed"));
   const routes = parseConfig(
     "routes",
@@ -71,53 +78,45 @@ function feedConfig(feedId: string) {
   const op = parseOperator(
     file(operatorFiles, "operators", feed.operator, "operator"),
   );
+  const net = NETWORKS.find((n) => n.feeds.includes(feedId));
   return {
     feed,
-    op,
     kinematics: resolveKinematics(
       defaultsFile("kinematics"),
       op,
       feed,
       routes.routes,
     ),
+    rt: resolveRt(defaultsFile("rt"), op, feed),
+    ...(net ?
+      {
+        rail: {
+          network: net.id,
+          operations: parseConfig(
+            "operations",
+            file(networkFiles, "networks", net.id, "operations"),
+          ),
+        },
+      }
+    : {}),
   };
 }
 
-function siteRegion(info: RegionInfo): SiteRegion {
-  // The first feed is the region's primary; the others are overlays (docs/DESIGN.md#overlay-feeds).
-  const [primary, ...others] = info.feeds;
-  const { feed, op, kinematics } = feedConfig(primary!);
-  const rt = file(regionSettings, "regions", info.id, "rt");
-  const operations = file(regionSettings, "regions", info.id, "operations");
-  return {
-    info,
-    config: {
-      feed,
-      kinematics,
-      ...(others.length ?
-        {
-          overlays: others.map((id) => {
-            const o = feedConfig(id);
-            return { feed: o.feed, kinematics: o.kinematics };
-          }),
-        }
-      : {}),
-      rt: resolveRt(
-        defaultsFile("rt"),
-        op,
-        feed,
-        rt === undefined ? undefined : parseRegionRt(rt),
-      ),
-      ...(operations === undefined ?
-        {}
-      : { operations: parseConfig("operations", operations) }),
-    },
-  };
-}
+/** Every rail network (config/networks/*). */
+const NETWORKS: readonly NetworkInfo[] = Object.entries(networkFiles)
+  .filter(([path]) => path.endsWith("/network.json"))
+  .map(([, json]) => parseNetwork(json));
+
+/** Regions superseded by a configured legacy alias are API-compatible, not separate map regions. */
+const regionInfos = Object.values(regionFiles).map(parseRegion);
+const aliasedRegionIds = new Set(
+  regionInfos.flatMap((info) => (info.aliases ?? []).map((alias) => alias.id)),
+);
 
 /** Every region: the default first, then by name. */
-export const REGIONS: readonly SiteRegion[] = Object.values(regionFiles)
-  .map((json) => siteRegion(parseRegion(json)))
+export const REGIONS: readonly SiteRegion[] = regionInfos
+  .filter((info) => !aliasedRegionIds.has(info.id))
+  .map(siteRegion)
   .sort(
     (a, b) =>
       Number(b.info.id === DEFAULT_REGION_ID)
@@ -130,16 +129,13 @@ export const DEFAULT_REGION: SiteRegion =
   REGIONS.find((r) => r.info.id === DEFAULT_REGION_ID) ?? REGIONS[0]!;
 
 /**
- * The region with track-level rail (operations config), whose corrections /admin reviews: the
- * server's live dispatcher and corrections support one so far.
+ * The rail network whose corrections /admin reviews: the server's live dispatcher and corrections
+ * support one so far.
  */
-export function railRegion(): SiteRegion {
-  const rail = REGIONS.filter((r) => r.config.operations);
-  if (rail.length !== 1)
-    throw new Error(
-      `Expected one region with track-level rail, found ${rail.length}`,
-    );
-  return rail[0]!;
+export function railNetwork(): NetworkInfo {
+  if (NETWORKS.length !== 1)
+    throw new Error(`Expected one rail network, found ${NETWORKS.length}`);
+  return NETWORKS[0]!;
 }
 
 /** [[west, south], [east, north]] for MapLibre. */

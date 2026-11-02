@@ -1,12 +1,13 @@
 // The RT service: one upstream poller per real-time feed shared by all clients (feed.ts), SeaBus AIS,
 // live dispatch, and a framework-free HTTP handler (apps/server/README.md#real-time-service).
 //
-// The live endpoint and the per-date files it points to (apps/server/README.md#live-endpoint):
+// The live endpoints and the per-date files they point to (apps/server/README.md#live-endpoints):
 //
-//   GET /regions/<id>/live/transit                          every live source in one shared, edge-cached response
-//   GET /regions/<id>/days/<YYYYMMDD>/<feed>/ais            a feed's vessels' AIS fixes recorded for a service date so far
-//   GET /regions/<id>/days/<YYYYMMDD>/<feed>/changes        a service date's bus service changes in a feed (current)
-//   GET /regions/<id>/days/<YYYYMMDD>/<feed>/changes/<v>.json   a version of them (immutable)
+//   GET /feeds/<id>/live                          a feed's live sources in one shared, edge-cached response
+//   GET /feeds/<id>/days/<YYYYMMDD>/ais           its vessels' AIS fixes recorded for a service date so far
+//   GET /feeds/<id>/days/<YYYYMMDD>/changes       a service date's bus service changes (current)
+//   GET /feeds/<id>/days/<YYYYMMDD>/changes/<v>.json   a version of them (immutable)
+//   GET /networks/<id>/live/dispatch              a rail network's live dispatch, shared and edge-cached
 //
 // And:
 //
@@ -14,16 +15,15 @@
 //   GET /rt/coverage?feed=<id>&from=ms&to=ms           a feed's recorder coverage intervals
 //   GET /rt/status                      the pollers' health (no secrets)
 //   GET /rt/alerts                      current alerts for our rail lines (and whether drafted)
-//   GET /rt/dispatch                    live dispatch: current patch per service date (index)
-//   GET /rt/dispatch/<date>/<v>.json    a patch version (immutable)
+//   GET /networks/<id>/dispatch                    a rail network's live dispatch: current patch per service date (index)
+//   GET /networks/<id>/dispatch/<date>/<v>.json    a patch version (immutable)
 //
 // `feed` is required where it's a parameter. Client requests never trigger upstream
 // calls: each feed's rate is fixed by its poll schedule within its daily cap
 // (packages/transit-core/src/rt/budget.ts). Only one process polls and records (the "leader",
-// leader.ts); the others forward /rt/* and /regions/* to it and take over when it goes away. Every
+// leader.ts); the others forward /rt/*, /feeds/* and /networks/* to it and take over when it goes away. Every
 // route's vehicles are recorded (files and database); clients only ever see the routes we draw.
 
-import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import translinkFeed from "@transitopia/config/feeds/translink/feed.json" with { type: "json" };
@@ -32,17 +32,17 @@ import {
   parseFeed,
   type FeedAis,
   type FeedInfo,
-  type RegionInfo,
 } from "@transitopia/transit-core/config.ts";
 import type { RtCoverageResponse } from "@transitopia/transit-core/rt/types.ts";
 import {
-  regionPaths,
   type RailNetwork,
   RT_HISTORY_DIR,
   AIS_HISTORY_DIR,
+  readRegions,
 } from "@transitopia/data/paths.ts";
+import type { RegionInfo } from "@transitopia/transit-core/config.ts";
 import { aisstreamApiKey, secret } from "../secrets.ts";
-import { AisFeed } from "./ais.ts";
+import { AisFeed, AisStream } from "./ais.ts";
 import {
   encodeFixes,
   type AisDayResponse,
@@ -51,7 +51,7 @@ import type { AisFix } from "@transitopia/transit-core/ais/match.ts";
 import { Recorder } from "./recorder.ts";
 import { LiveDispatcher, type LiveDispatchOptions } from "./dispatch.ts";
 import type { Store } from "../store.ts";
-import { FileLeaderLock, type LeaderLock } from "../leader.ts";
+import type { LeaderLock } from "../leader.ts";
 import type { CorrectionsRepo } from "../corrections.ts";
 import type { RtStatus } from "@transitopia/shared/admin-api.ts";
 import { FeedPoller } from "./feed.ts";
@@ -60,11 +60,12 @@ import {
   addDays,
   localDate,
   isServiceDate,
+  type ServiceDate,
 } from "@transitopia/transit-core/time.ts";
 import {
   LIVE_SCHEMA,
   type LiveAisSection,
-  type LiveTransitResponse,
+  type LiveResponse,
 } from "@transitopia/transit-core/rt/live.ts";
 import type { RtDayChanges } from "@transitopia/transit-core/rt/changes.ts";
 import type { SnapshotRow } from "@transitopia/transit-core/rt/types.ts";
@@ -150,14 +151,17 @@ function mapAliasChanges(body: string, agency: string): string {
 }
 
 export interface RtServiceOptions {
-  /** Where recordings go: each feed's under <historyDir>/<feed>/, the leader's lock file at the top. */
+  /** Where recordings go: each feed's under <historyDir>/<feed>/. */
   historyDir?: string;
   /** Record snapshots to disk (default true). */
   record?: boolean;
-  /** The regions served under /regions/<id>/ (default: the rail region, showing TransLink's feed). */
-  regions?: ServedRegion[] | undefined;
-  /** Every feed the regions show (default: TransLink's); those with real time get a poller. */
+  /**
+   * Every feed served under /feeds/<id>/ (default: TransLink's); those with real time get a poller,
+   * those with AIS a stream.
+   */
   feeds?: FeedInfo[] | undefined;
+  /** Regions for legacy /regions/* compatibility endpoints; defaults to the checked config. */
+  regions?: ServedRegion[] | undefined;
   /**
    * Fetch upstream (default true). Without it nothing is polled, keyless feeds included: polling
    * spends a shared budget, so only production polls (RT_POLL).
@@ -169,27 +173,29 @@ export interface RtServiceOptions {
   aisApiKey?: string | null;
   /** Where AIS fixes go: each feed's under <aisHistoryDir>/<feed>/. */
   aisHistoryDir?: string;
-  /** Where confirmed disruptions live and alert drafts are written (default config/regions/metro-vancouver/disruptions). */
-  disruptionsDir?: string;
   /** Live dispatch (apps/server/README.md#live-dispatch-and-previews): on by default; false disables it, an object configures it. */
   dispatch?: boolean | LiveDispatchOptions;
-  /** Record to PostgreSQL as well as files (and keep the request ledger there). */
+  /**
+   * Record to PostgreSQL as well as files, and keep the request ledger there. The server always
+   * has one; without it (tests), the ledger is only in memory.
+   */
   store?: Store | undefined;
-  /** Corrections in the database: alert drafts go there, and the dispatcher reads it. */
+  /**
+   * Corrections in the database: alert drafts go there, and the dispatcher reads it. The server
+   * always has them; without them (tests), there's no live dispatch and no alert drafts.
+   */
   corrections?: CorrectionsRepo | undefined;
-  /** Leader election; default: the lock file in the history directory. */
+  /** Leader election (the server's: PgLeaderLock); without one (tests), this process leads. */
   leaderLock?: LeaderLock | undefined;
   /** Only forward /rt/* to this RT service (e.g. production's, for local development). */
   forwardTo?: string | undefined;
   /** Called when this process becomes the leader (e.g. to start the scheduled jobs). */
   onLead?: (() => void) | undefined;
   /**
-   * The rail network (packages/data/src/paths.ts → railNetwork): its region's live endpoint carries
-   * live dispatch, and its feed's alerts become disruption drafts. Without one, neither runs.
+   * The rail network (packages/data/src/paths.ts → railNetwork): its live dispatch is served under
+   * /networks/<id>/, and its feed's alerts become disruption drafts. Without one, neither runs.
    */
   rail?: RailNetwork | undefined;
-  /** When `regions` isn't given, serve one region of this id showing `feeds` (tests). */
-  regionId?: string | undefined;
   log?: (msg: string) => void;
 }
 
@@ -198,11 +204,14 @@ const LEADER_RETRY_MS = 30_000;
 
 export class RtService {
   private alerts: ServiceAlert[] = [];
-  /** Drafts from the rail feed's alerts (none without a rail network). */
+  /** Drafts from the rail feed's alerts (none without a rail network or corrections). */
   readonly alertDrafts: AlertDrafts | undefined;
   /** One per feed with real time, by feed id. */
   readonly pollers = new Map<string, FeedPoller>();
-  readonly regions: ServedRegion[];
+  /** The feeds served under /feeds/<id>/. */
+  readonly feeds: ReadonlySet<string>;
+  private readonly configuredRegions: ServedRegion[] | undefined;
+  private regionsPromise: Promise<ServedRegion[]> | undefined;
   /** The rail network, if this server has one: live dispatch and alert drafts are its. */
   readonly rail: RailNetwork | undefined;
   private running = false;
@@ -210,12 +219,14 @@ export class RtService {
   readonly dispatcher: LiveDispatcher | undefined;
   /**
    * Feeds whose vessels report AIS (feed.json → ais), by feed id, each with its stream when this
-   * process streams (a key, RT_POLL). aisstream.io allows 3 connections per account: one per feed.
+   * process streams (a key, RT_POLL): its fixes from the one connection they share (`aisStream`).
    */
   readonly aisFeeds = new Map<
     string,
     { cfg: FeedAis; stream: AisFeed | undefined }
   >();
+  /** The one aisstream.io connection every feed's vessels come in on, when this process streams. */
+  private aisStream: AisStream | undefined;
   private log: (msg: string) => void;
   private record: boolean;
   private historyDir: string;
@@ -224,16 +235,15 @@ export class RtService {
   private leaderLock: LeaderLock | undefined;
   private leaderRetry: ReturnType<typeof setTimeout> | undefined;
   private forwardOnly: boolean;
-  private port: number | undefined;
   readonly store: Store | undefined;
   private onLead: (() => void) | undefined;
 
   constructor(opts: RtServiceOptions = {}) {
     this.rail = opts.rail;
-    const feedIds = (opts.feeds ?? [parseFeed(translinkFeed)]).map((f) => f.id);
-    this.regions =
-      opts.regions
-      ?? (opts.regionId ? [{ id: opts.regionId, feeds: feedIds }] : []);
+    this.configuredRegions = opts.regions;
+    this.feeds = new Set(
+      (opts.feeds ?? [parseFeed(translinkFeed)]).map((f) => f.id),
+    );
     this.historyDir = opts.historyDir ?? RT_HISTORY_DIR;
     this.log = opts.log ?? ((m) => console.log(`[rt] ${m}`));
     this.record = opts.record ?? true;
@@ -261,7 +271,7 @@ export class RtService {
           record: this.record,
           store: opts.store,
           log: this.log,
-          // Drafts from the rail region's feeds' alerts for its lines.
+          // Drafts from the rail feed's alerts for its lines.
           ...(railFeeds.has(feed.id) ?
             {
               onAlerts: (alerts: DecodedAlert[], rail: Map<string, string>) =>
@@ -272,28 +282,37 @@ export class RtService {
       );
     }
     this.dispatcher =
-      opts.dispatch === false || opts.forwardTo || !this.rail ?
+      (
+        opts.dispatch === false
+        || opts.forwardTo
+        || !this.rail
+        || !opts.corrections
+      ) ?
         undefined
       : new LiveDispatcher({
           net: this.rail,
           log: this.log,
+          corrections: opts.corrections,
           ...(opts.store ? { store: opts.store } : {}),
-          ...(opts.corrections ? { corrections: opts.corrections } : {}),
           ...(typeof opts.dispatch === "object" ? opts.dispatch : {}),
         });
     const aisKey =
       opts.aisApiKey === null || opts.forwardTo || !poll ?
         undefined
       : (opts.aisApiKey ?? aisstreamApiKey());
+    this.aisStream =
+      aisKey ?
+        new AisStream({ apiKey: aisKey, log: (m) => this.log(`AIS: ${m}`) })
+      : undefined;
     for (const feed of opts.feeds ?? [parseFeed(translinkFeed)]) {
       const cfg = feed.ais;
       if (!cfg) continue;
       const stream =
         aisKey ?
           new AisFeed({
-            apiKey: aisKey,
             cfg,
             routes: cfg.routes,
+            timezone: feed.timezone,
             recorder: new Recorder(
               join(opts.aisHistoryDir ?? AIS_HISTORY_DIR, feed.id),
               cfg.coverageGapS * 1000,
@@ -308,15 +327,14 @@ export class RtService {
             : {}),
           })
         : undefined;
+      if (stream) this.aisStream?.add(stream);
       this.aisFeeds.set(feed.id, { cfg, stream });
     }
     // Alert drafts and their history go with the rail feed's recordings.
     this.alertDrafts =
-      this.rail ?
+      this.rail && opts.corrections ?
         new AlertDrafts({
           repo: opts.corrections,
-          disruptionsDir:
-            opts.disruptionsDir ?? regionPaths(this.rail.region).disruptions,
           historyDir: join(this.historyDir, this.rail.feed),
           log: this.log,
         })
@@ -328,7 +346,7 @@ export class RtService {
     return this.isLeader;
   }
 
-  /** The rail region's lines' alerts: drafts of the ones we can model (packages/transit-core/DESIGN.md#disruptions-and-alerts). */
+  /** The rail network's lines' alerts: drafts of the ones we can model (packages/transit-core/DESIGN.md#disruptions-and-alerts). */
   private async railAlerts(
     decoded: DecodedAlert[],
     railKeyById: Map<string, string>,
@@ -360,10 +378,7 @@ export class RtService {
    */
   private async acquireLeadership(): Promise<boolean> {
     if (!this.running) return false;
-    this.leaderLock ??= new FileLeaderLock(
-      join(this.historyDir, ".lock"),
-      this.port,
-    );
+    if (!this.leaderLock) return true;
     const state = await this.leaderLock.tryAcquire().catch((e: Error) => {
       this.log(`leader election failed (${e.message})`);
       return { leader: false as const, url: undefined };
@@ -387,21 +402,17 @@ export class RtService {
     return false;
   }
 
-  /** @param port the port this process serves /rt/* on, advertised to followers. */
-  async start(port?: number): Promise<void> {
+  async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
-    this.port = port;
     if (this.forwardOnly) {
       this.log(`Forwarding /rt/* to ${this.leaderUrl} (no polling here)`);
       return;
     }
     const polls = [...this.pollers.values()].some((p) => p.polling);
     const streams = [...this.aisFeeds.values()].some((a) => a.stream);
-    if (polls || streams || this.store) {
-      await mkdir(this.historyDir, { recursive: true });
-      if (!(await this.acquireLeadership())) return;
-    }
+    if ((polls || streams || this.store) && !(await this.acquireLeadership()))
+      return;
     await this.lead();
   }
 
@@ -420,8 +431,8 @@ export class RtService {
         continue;
       }
       this.log(`Streaming ${id}'s vessel positions from aisstream.io`);
-      await a.stream.start();
     }
+    await this.aisStream?.start();
     // The last alerts, so /rt/alerts and /admin aren't empty until the first alerts poll.
     if (this.alertDrafts)
       this.alerts = await this.alertDrafts.restore().catch((e: Error) => {
@@ -436,7 +447,7 @@ export class RtService {
     this.running = false;
     this.isLeader = false;
     this.dispatcher?.stop();
-    for (const a of this.aisFeeds.values()) a.stream?.stop();
+    this.aisStream?.stop();
     if (this.leaderRetry) clearTimeout(this.leaderRetry);
     void this.leaderLock?.release();
     await Promise.all([...this.pollers.values()].map((p) => p.stop()));
@@ -475,77 +486,182 @@ export class RtService {
   }
 
   /**
-   * GET /regions/<id>/live/transit: every live source for a region's transit map in one response,
-   * the same for every visitor (packages/transit-core/src/rt/live.ts).
+   * GET /feeds/<id>/live: a feed's live sources in one response, the same for every visitor
+   * (packages/transit-core/src/rt/live.ts): "vehicles" and "changes" where it has real time, "ais"
+   * where its vessels report AIS.
    */
-  async liveTransit(
+  private async liveTransit(
     region: ServedRegion,
-    now = Date.now(),
+    now: number,
     alias?: RegionAlias,
-  ): Promise<LiveTransitResponse> {
-    const r: LiveTransitResponse = {
-      schema: LIVE_SCHEMA,
-      nextAt: null,
-      sources: {},
-    };
+  ): Promise<LiveResponse> {
+    const r: LiveResponse = { schema: LIVE_SCHEMA, nextAt: null, sources: {} };
     const due: number[] = [];
     const feeds =
       alias?.feeds.map((mapping) => [mapping.feed, mapping] as const)
       ?? region.feeds.map((feed) => [feed, undefined] as const);
     for (const [feed, mapping] of feeds) {
-      const p = this.pollers.get(feed);
-      if (!p) continue;
-      const sections = await p.liveSections(region.id, now);
-      if (!mapping || !alias) Object.assign(r.sources, sections);
-      else {
+      const poller = this.pollers.get(feed);
+      if (!poller) continue;
+      const sections = await poller.liveSections(now);
+      const source = mapping?.id ?? feed;
+      if (mapping) {
         const suffix = `@${mapping.agency}`;
-        for (const [source, original] of Object.entries(sections)) {
-          const legacySource = `${mapping.id}${source.slice(feed.length)}`;
-          if (original.kind === "vehicles") {
-            const vehicles = original.data;
-            if (vehicles) {
-              vehicles.v = vehicles.v.flatMap((row): SnapshotRow[] => {
-                if (!row[3].endsWith(suffix)) return [];
-                row[3] = row[3].slice(0, -suffix.length);
-                return [row];
-              });
-            }
-            r.sources[legacySource] = original;
-          } else {
-            const versions = Object.fromEntries(
-              Object.entries(original.versions).map(([date, pointer]) => [
-                date,
-                {
-                  ...pointer,
-                  path: pointer.path
-                    .replace(`regions/${region.id}/`, `regions/${alias.id}/`)
-                    .replace(`/${feed}/changes/`, `/${mapping.id}/changes/`),
-                },
-              ]),
-            );
-            r.sources[legacySource] = { ...original, versions };
-          }
-        }
+        const data = sections.vehicles.data;
+        if (data)
+          data.v = data.v.flatMap((row): SnapshotRow[] => {
+            if (!row[3].endsWith(suffix)) return [];
+            row[3] = row[3].slice(0, -suffix.length);
+            return [row];
+          });
       }
-      const next = p.nextDataAt();
+      r.sources[`${source}/vehicles`] = sections.vehicles;
+      const versions = Object.fromEntries(
+        Object.entries(sections.changes.versions).map(([date, pointer]) => [
+          date,
+          {
+            ...pointer,
+            path: this.legacyChangesPath(
+              pointer.path,
+              alias?.id ?? region.id,
+              source,
+              region.id,
+              feed,
+            ),
+          },
+        ]),
+      );
+      r.sources[`${source}/changes`] = { ...sections.changes, versions };
+      const next = poller.nextDataAt();
       if (next !== undefined) due.push(next);
     }
-    for (const feed of alias ? [] : region.feeds) {
-      const a = this.aisFeeds.get(feed);
-      if (!a) continue;
-      r.sources[`${feed}/ais`] = this.aisSection(a);
-      const next = a.stream?.nextBatchAt();
-      if (next !== undefined) due.push(next);
-    }
-    if (region.id === this.rail?.region) {
-      if (this.dispatcher)
-        r.sources["dispatch"] = {
-          kind: "dispatch",
-          versions: this.dispatcher.index().byDate,
-        };
+    if (!alias) {
+      for (const feed of region.feeds) {
+        const ais = this.aisFeeds.get(feed);
+        if (!ais) continue;
+        r.sources[`${feed}/ais`] = this.aisSection(ais);
+        const next = ais.stream?.nextBatchAt();
+        if (next !== undefined) due.push(next);
+      }
     }
     if (due.length) r.nextAt = Math.min(...due);
     return r;
+  }
+
+  private legacyChangesPath(
+    path: string,
+    regionId: string,
+    sourceFeed: string,
+    oldRegionId: string,
+    oldFeed: string,
+  ): string {
+    const current = /^feeds\/[^/]+\/days\/(\d{8})\/changes\/(.+)$/.exec(path);
+    if (current)
+      return `regions/${regionId}/days/${current[1]}/${sourceFeed}/changes/${current[2]}`;
+    return path
+      .replace(`regions/${oldRegionId}/`, `regions/${regionId}/`)
+      .replace(`/${oldFeed}/changes/`, `/${sourceFeed}/changes/`);
+  }
+
+  private async servedRegions(): Promise<ServedRegion[]> {
+    if (this.configuredRegions) return this.configuredRegions;
+    this.regionsPromise ??= readRegions();
+    return this.regionsPromise;
+  }
+
+  private async handleRegion(
+    id: string,
+    rest: string,
+    now = Date.now(),
+  ): Promise<HttpResult> {
+    const regions = await this.servedRegions();
+    const region =
+      regions.find((r) => r.id === id)
+      ?? regions.find((r) => r.aliases?.some((a) => a.id === id));
+    if (!region) return json(404, { error: "No such region" });
+    const alias =
+      region.id === id ? undefined : region.aliases?.find((a) => a.id === id);
+    if (rest === "/live/transit")
+      return this.liveResult(await this.liveTransit(region, now, alias), now);
+
+    const aisDay = /^\/days\/(\d{8})\/([a-z0-9-]+)\/ais$/.exec(rest);
+    if (aisDay && region.feeds.includes(aisDay[2]!)) {
+      if (!isServiceDate(aisDay[1]!)) return json(404, { error: "Not found" });
+      return this.aisDay(aisDay[2]!, aisDay[1]!, now);
+    }
+
+    const changes =
+      /^\/days\/(\d{8})\/([a-z0-9-]+)\/changes(?:\/([0-9a-f]+)\.json)?$/.exec(
+        rest,
+      );
+    const aliasFeed = changes && alias?.feeds.find((f) => f.id === changes[2]);
+    const feed = aliasFeed?.feed ?? changes?.[2];
+    const poller =
+      changes && feed && region.feeds.includes(feed) ?
+        this.pollers.get(feed)
+      : undefined;
+    if (!changes || !poller || !isServiceDate(changes[1]!))
+      return json(404, { error: "Not found" });
+    const version = changes[3];
+    const body =
+      version ?
+        poller.changes.version(changes[1]!, version)
+      : (await poller.changes.versioned(changes[1]!)).body;
+    if (body === undefined)
+      return json(
+        404,
+        { error: "No such version" },
+        { "Cache-Control": "no-store" },
+      );
+    const mapped = aliasFeed ? mapAliasChanges(body, aliasFeed.agency) : body;
+    return tagged(
+      mapped,
+      version ?
+        "public, max-age=31536000, immutable"
+      : `public, max-age=${changes[1]! >= addDays(localDate(now), -1) ? 30 : 3600}`,
+    );
+  }
+
+  async liveFeed(feed: string, now = Date.now()): Promise<LiveResponse> {
+    const r: LiveResponse = { schema: LIVE_SCHEMA, nextAt: null, sources: {} };
+    const due: number[] = [];
+    const p = this.pollers.get(feed);
+    if (p) {
+      Object.assign(r.sources, await p.liveSections(now));
+      const next = p.nextDataAt();
+      if (next !== undefined) due.push(next);
+    }
+    const a = this.aisFeeds.get(feed);
+    if (a) {
+      r.sources["ais"] = this.aisSection(a);
+      const next = a.stream?.nextBatchAt();
+      if (next !== undefined) due.push(next);
+    }
+    if (due.length) r.nextAt = Math.min(...due);
+    return r;
+  }
+
+  /** GET /networks/<id>/live/dispatch: the rail network's current dispatch patch per service date. */
+  liveDispatch(dispatcher: LiveDispatcher): LiveResponse {
+    return {
+      schema: LIVE_SCHEMA,
+      nextAt: null,
+      sources: {
+        dispatch: { kind: "dispatch", versions: dispatcher.index().byDate },
+      },
+    };
+  }
+
+  /** A live endpoint's response: the edge keeps it until new data is due, and never longer than clients poll. */
+  private liveResult(r: LiveResponse, now: number): HttpResult {
+    const maxAge =
+      r.nextAt === null ?
+        rtDefaults.clientPollS
+      : Math.min(
+          rtDefaults.clientPollS,
+          Math.max(1, Math.ceil((r.nextAt - now) / 1000)),
+        );
+    return tagged(JSON.stringify(r), `public, max-age=${maxAge}`);
   }
 
   private aisSection(a: {
@@ -580,112 +696,106 @@ export class RtService {
     return ais;
   }
 
-  /** GET /regions/<id>/…: the live endpoint and the per-date files it points to. */
-  private async handleRegion(
-    id: string,
+  /** GET /feeds/<id>/…: the feed's live endpoint and the per-date files it points to. */
+  private async handleFeed(
+    feed: string,
     rest: string,
     now = Date.now(),
   ): Promise<HttpResult> {
-    const regionMatch =
-      this.regions.find((r) => r.id === id) ?
-        { region: this.regions.find((r) => r.id === id)!, alias: undefined }
-      : this.regions.flatMap((r) =>
-          (r.aliases ?? [])
-            .filter((alias) => alias.id === id)
-            .map((alias) => ({ region: r, alias })),
-        )[0];
-    if (!regionMatch) return json(404, { error: "No such region" });
-    const { region, alias } = regionMatch;
-    if (rest === "/live/transit") {
-      const r = await this.liveTransit(region, now, alias);
-      // The edge keeps it until new data is due, and never longer than clients poll.
-      const maxAge =
-        r.nextAt === null ?
-          rtDefaults.clientPollS
-        : Math.min(
-            rtDefaults.clientPollS,
-            Math.max(1, Math.ceil((r.nextAt - now) / 1000)),
-          );
-      return tagged(JSON.stringify(r), `public, max-age=${maxAge}`);
+    if (!this.feeds.has(feed)) return json(404, { error: "No such feed" });
+    if (rest === "/live")
+      return this.liveResult(await this.liveFeed(feed, now), now);
+    const day = /^\/days\/(\d{8})\/(ais|changes(?:\/([0-9a-f]+)\.json)?)$/.exec(
+      rest,
+    );
+    if (!day || !isServiceDate(day[1]!))
+      return json(404, { error: "Not found" });
+    return day[2] === "ais" ?
+        this.aisDay(feed, day[1], now)
+      : this.changesDay(feed, day[1], day[3], now);
+  }
+
+  /** A feed's AIS fixes recorded for a service date so far (its day file). */
+  private async aisDay(
+    feed: string,
+    date: ServiceDate,
+    now: number,
+  ): Promise<HttpResult> {
+    const ais = this.aisFeeds.get(feed);
+    if (!ais) return json(404, { error: "Not found" });
+    let body: AisDayResponse;
+    if (ais.stream) {
+      const st = ais.stream.status();
+      const day = await ais.stream.dayFile(date, now);
+      body = {
+        status: st.connected ? "ok" : "stale",
+        to: day.to,
+        complete: day.complete,
+        fixes: encodeFixes(day.fixes),
+      };
+      if (!st.connected && st.lastError) body.error = st.lastError;
+    } else
+      body = {
+        status: "unavailable",
+        error: "No aisstream.io API key configured",
+        to: 0,
+        complete: false,
+        fixes: [],
+      };
+    return tagged(
+      JSON.stringify(body),
+      body.complete ?
+        "public, max-age=86400"
+      : `public, max-age=${AIS_DAY_MAX_AGE_S}`,
+    );
+  }
+
+  /** A feed's bus service changes for a service date: the current version, or one by its id (immutable). */
+  private async changesDay(
+    feed: string,
+    date: ServiceDate,
+    version: string | undefined,
+    now: number,
+  ): Promise<HttpResult> {
+    const poller = this.pollers.get(feed);
+    if (!poller) return json(404, { error: "Not found" });
+    if (version) {
+      // Asked for by a pointer from the live endpoint, so normally still kept.
+      const body = poller.changes.version(date, version);
+      return body === undefined ?
+          json(
+            404,
+            { error: "No such version" },
+            { "Cache-Control": "no-store" },
+          )
+        : tagged(body, "public, max-age=31536000, immutable");
     }
-    const aisDay = /^\/days\/(\d{8})\/([a-z0-9-]+)\/ais$/.exec(rest);
-    const ais =
-      aisDay && region.feeds.includes(aisDay[2]!) ?
-        this.aisFeeds.get(aisDay[2]!)
-      : undefined;
-    if (aisDay && ais) {
-      const date = aisDay[1]!;
-      if (!isServiceDate(date)) return json(404, { error: "Not found" });
-      let body: AisDayResponse;
-      if (ais.stream) {
-        const st = ais.stream.status();
-        const day = await ais.stream.dayFile(date, now);
-        body = {
-          status: st.connected ? "ok" : "stale",
-          to: day.to,
-          complete: day.complete,
-          fixes: encodeFixes(day.fixes),
-        };
-        if (!st.connected && st.lastError) body.error = st.lastError;
-      } else
-        body = {
-          status: "unavailable",
-          error: "No aisstream.io API key configured",
-          to: 0,
-          complete: false,
-          fixes: [],
-        };
-      return tagged(
-        JSON.stringify(body),
-        body.complete ?
-          "public, max-age=86400"
-        : `public, max-age=${AIS_DAY_MAX_AGE_S}`,
-      );
-    }
-    const changes =
-      /^\/days\/(\d{8})\/([a-z0-9-]+)\/changes(?:\/([0-9a-f]+)\.json)?$/.exec(
-        rest,
-      );
-    const aliasFeed = changes && alias?.feeds.find((f) => f.id === changes[2]);
-    const feed = aliasFeed?.feed ?? changes?.[2];
-    const poller =
-      changes && feed && region.feeds.includes(feed) ?
-        this.pollers.get(feed)
-      : undefined;
-    if (changes && poller) {
-      const date = changes[1]!;
-      if (!isServiceDate(date)) return json(404, { error: "Not found" });
-      const version = changes[3];
-      if (version) {
-        // Asked for by a pointer from the live endpoint, so normally still kept.
-        const body = poller.changes.version(date, version);
-        return body === undefined ?
-            json(
-              404,
-              { error: "No such version" },
-              { "Cache-Control": "no-store" },
-            )
-          : tagged(
-              aliasFeed ? mapAliasChanges(body, aliasFeed.agency) : body,
-              "public, max-age=31536000, immutable",
-            );
-      }
-      const recent = date >= addDays(localDate(now), -1);
-      const body = (await poller.changes.versioned(date)).body;
-      return tagged(
-        aliasFeed ? mapAliasChanges(body, aliasFeed.agency) : body,
-        `public, max-age=${recent ? 30 : 3600}`,
-      );
-    }
-    return json(404, { error: "Not found" });
+    const recent = date >= addDays(localDate(now), -1);
+    return tagged(
+      (await poller.changes.versioned(date)).body,
+      `public, max-age=${recent ? 30 : 3600}`,
+    );
   }
 
   async handle(pathname: string, params: URLSearchParams): Promise<HttpResult> {
     if (this.leaderUrl) return this.forward(pathname, params);
     const inRegion = /^\/regions\/([^/]+)(\/.*)$/.exec(pathname);
     if (inRegion) return this.handleRegion(inRegion[1]!, inRegion[2]!);
-    if (pathname.startsWith("/rt/dispatch"))
-      return this.handleDispatch(pathname);
+    const inFeed = /^\/feeds\/([^/]+)(\/.*)$/.exec(pathname);
+    if (inFeed) return this.handleFeed(inFeed[1]!, inFeed[2]!);
+    const inNetwork = /^\/networks\/([^/]+)(\/.*)$/.exec(pathname);
+    if (inNetwork) {
+      if (inNetwork[1] !== this.rail?.network)
+        return json(404, { error: "No such rail network" });
+      if (inNetwork[2] === "/live/dispatch")
+        return this.dispatcher ?
+            this.liveResult(this.liveDispatch(this.dispatcher), Date.now())
+          : json(404, { error: "Live dispatch is off" });
+      const dispatch = /^\/dispatch(\/.*)?$/.exec(inNetwork[2]!);
+      return dispatch ?
+          this.handleDispatch(dispatch[1] ?? "")
+        : json(404, { error: "Not found" });
+    }
     // A feed's poller, for the endpoints that take `feed=<id>`.
     const feedParam = params.get("feed");
     const poller = feedParam ? this.pollers.get(feedParam) : undefined;
@@ -756,14 +866,14 @@ export class RtService {
     };
   }
 
-  /** Live dispatch: the index of current versions, or one immutable patch version. */
-  private async handleDispatch(pathname: string): Promise<HttpResult> {
+  /** Live dispatch: the index of current versions (`rest` empty), or one immutable patch version (`/<date>/<v>.json`). */
+  private async handleDispatch(rest: string): Promise<HttpResult> {
     if (!this.dispatcher) return json(404, { error: "Live dispatch is off" });
-    if (pathname === "/rt/dispatch" || pathname === "/rt/dispatch/")
+    if (rest === "" || rest === "/")
       return json(200, this.dispatcher.index(), {
         "Cache-Control": "public, max-age=10",
       });
-    const m = /^\/rt\/dispatch\/(\d{8})\/([0-9a-z]+)\.json$/.exec(pathname);
+    const m = /^\/(\d{8})\/([0-9a-z]+)\.json$/.exec(rest);
     const patch =
       m && isServiceDate(m[1]!) ?
         await this.dispatcher.patch(m[1], m[2]!)

@@ -12,6 +12,7 @@ export type DatasetId =
   | "bc-transit-gtfs-rt"
   | "bc-ferries-gtfs"
   | "bc-inland-ferries"
+  | "hullo-gtfs"
   | "aisstream";
 
 export interface Dataset {
@@ -113,6 +114,12 @@ export const DATASETS: Record<DatasetId, Dataset> = {
     legend:
       "Inland ferry schedules transcribed by Transitopia from the Government of British Columbia's published timetables.",
     url: "https://www2.gov.bc.ca/gov/content/transportation/passenger-travel/water-travel/inland-ferries",
+  },
+  // Hullo publishes no terms for its GTFS (DATA-LICENSES.md): the credit names it, no license.
+  "hullo-gtfs": {
+    id: "hullo-gtfs",
+    credit: "Schedules: Hullo",
+    url: "https://hullo.com",
   },
   aisstream: {
     id: "aisstream",

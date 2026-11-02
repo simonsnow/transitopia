@@ -4,16 +4,17 @@
 // changes, and serves what the live endpoint, /rt/history and /rt/status need. RtService runs one per
 // feed, whichever regions show it, so a feed in two regions is polled and recorded once.
 
-import { readFile, rename, stat, writeFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import type {
   FeedInfo,
   FeedRealtime,
 } from "@transitopia/transit-core/config.ts";
-import type {
-  FeedManifest,
-  ServicePlan,
+import {
+  gtfsRouteIds,
+  type FeedManifest,
+  type ServicePlan,
 } from "@transitopia/transit-core/plan/types.ts";
 import {
   compactSnapshot,
@@ -127,7 +128,6 @@ export class FeedPoller {
   };
   upstreamCalls = 0;
   private ledger: RequestLedger;
-  private ledgerWrite: Promise<void> = Promise.resolve();
   private nextPollAt: Partial<Record<PollFeed, number>> = {};
   private capped = false;
   /** When this process started polling as the leader (endpoints' ages count from here until their first success). */
@@ -226,56 +226,23 @@ export class FeedPoller {
     this.loop("alerts", () => this.pollAlerts());
   }
 
-  /** Stop polling; resolves once polls under way and the ledger's last save have finished. */
+  /** Stop polling; resolves once polls under way have finished. */
   async stop(): Promise<void> {
     this.running = false;
     for (const t of Object.values(this.timers)) clearTimeout(t);
     this.timers = {};
     await Promise.allSettled(this.inFlight);
-    await this.ledgerWrite;
   }
 
   // --- the request ledger ---
 
-  private get ledgerPath(): string {
-    return join(this.recorder.dir, "requests.json");
-  }
-
+  /** Each feed's last 24 hours of requests, so a restart keeps counting (none without a store: tests). */
   private async loadLedger(): Promise<void> {
-    const cap = this.schedule.dailyCap;
-    if (this.opts.store) {
-      this.ledger = new RequestLedger(
-        cap,
-        await this.opts.store.recentRequests(this.feed.id),
-      );
-      return;
-    }
-    try {
-      const raw = JSON.parse(await readFile(this.ledgerPath, "utf8")) as {
-        requests?: [number, PollFeed][];
-      };
-      this.ledger = new RequestLedger(cap, raw.requests ?? []);
-    } catch {
-      // No ledger yet (first run, or a history dir without one).
-    }
-  }
-
-  /** Persist the ledger (serialised, atomic), so restarts keep counting. With a database, requests are rows instead. */
-  private saveLedger(): Promise<void> {
-    if (this.opts.store) return Promise.resolve();
-    const text = JSON.stringify(this.ledger);
-    this.ledgerWrite = this.ledgerWrite
-      .then(async () => {
-        const tmp = `${this.ledgerPath}.tmp`;
-        await writeFile(tmp, text);
-        await rename(tmp, this.ledgerPath);
-      })
-      .catch((e) =>
-        this.log(
-          `could not save request ledger (${e instanceof Error ? e.message : String(e)})`,
-        ),
-      );
-    return this.ledgerWrite;
+    if (!this.opts.store) return;
+    this.ledger = new RequestLedger(
+      this.schedule.dailyCap,
+      await this.opts.store.recentRequests(this.feed.id),
+    );
   }
 
   /**
@@ -328,7 +295,6 @@ export class FeedPoller {
       this.capped = false;
       this.ledger.record(endpoint, now);
       this.upstreamCalls++;
-      void this.saveLedger();
       let delay = pollIntervalS(s, endpoint, now) * 1000;
       try {
         const bytes = await fn();
@@ -385,11 +351,13 @@ export class FeedPoller {
         ) as Pick<ServicePlan, "routes">;
         const versionRoutes: { key: string; gtfsRouteId: string }[] = [];
         for (const r of plan.routes) {
-          if (r.kind === "bus") {
-            map.set(r.gtfsRouteId, r.key);
-            versionRoutes.push({ key: r.key, gtfsRouteId: r.gtfsRouteId });
+          for (const id of gtfsRouteIds(r)) {
+            if (r.kind === "bus") {
+              map.set(id, r.key);
+              versionRoutes.push({ key: r.key, gtfsRouteId: id });
+            }
+            if (r.kind === "skytrain") rail.set(id, r.key);
           }
-          if (r.kind === "skytrain") rail.set(r.gtfsRouteId, r.key);
         }
         previousRoutes.push(...versionRoutes);
         currentRoutes = versionRoutes;
@@ -575,11 +543,11 @@ export class FeedPoller {
     return error ? { stale, error } : { stale };
   }
 
-  /** Its sections of a region's live endpoint: "<feed>/vehicles" and "<feed>/changes". */
-  async liveSections(
-    regionId: string,
-    now = Date.now(),
-  ): Promise<Record<string, LiveVehiclesSection | LiveChangesSection>> {
+  /** Its sections of the feed's live endpoint: "vehicles" and "changes". */
+  async liveSections(now = Date.now()): Promise<{
+    vehicles: LiveVehiclesSection;
+    changes: LiveChangesSection;
+  }> {
     const live = this.freshness(now);
     const vehicles: LiveVehiclesSection = {
       kind: "vehicles",
@@ -599,13 +567,10 @@ export class FeedPoller {
       const { version } = await this.changes.versioned(date);
       versions[date] = {
         version,
-        path: `regions/${regionId}/days/${date}/${this.feed.id}/changes/${version}.json`,
+        path: `feeds/${this.feed.id}/days/${date}/changes/${version}.json`,
       };
     }
-    return {
-      [`${this.feed.id}/vehicles`]: vehicles,
-      [`${this.feed.id}/changes`]: { kind: "changes", versions },
-    };
+    return { vehicles, changes: { kind: "changes", versions } };
   }
 
   /** When its next upstream poll is due, if it polls. */

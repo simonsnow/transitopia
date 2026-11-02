@@ -1,7 +1,8 @@
-// The committed config (config/: docs/DESIGN.md#regions-and-feeds): global defaults
+// The committed config (config/: docs/DESIGN.md#feeds-operators-and-rail-networks): global defaults
 // (config/defaults/), operators (config/operators/<id>/operator.json), feeds
-// (config/feeds/<id>/feed.json, routes.json) and regions (config/regions/<id>/region.json and its
-// settings files): one schema each,
+// (config/feeds/<id>/feed.json, routes.json, ferries/<route>.json), rail networks
+// (config/networks/<id>/network.json, operations.json, dispatch.json) and regions
+// (config/regions/<id>/region.json): one schema each,
 // checked wherever a file is loaded (site, server, pipelines) and by a test over every committed file,
 // so a misspelled or mistyped setting fails loudly instead of reading as undefined. Keys starting with
 // "$" are comments (the files cite their sources there) and are dropped before checking, at any depth.
@@ -18,6 +19,7 @@ import type { CarryConfig } from "./rt/carry.ts";
 import type { AisMatchConfig } from "./ais/match.ts";
 import type { GlideConfig } from "./ais/glide.ts";
 import type { RouteKind, RouteMode } from "./plan/types.ts";
+import type { FerryInfra } from "./plan/ferry-berths.ts";
 
 /** The value without its "$" comment keys, at any depth. */
 export function stripComments(v: unknown): unknown {
@@ -229,9 +231,10 @@ const routeMatch = z
  * every route in a feed is drawn by default, so only routes drawn differently are listed.
  */
 const route = z.strictObject({
-  /** The route's key, what other config (kinematics, SeaBus, regions) and URLs name it by. */
+  /** The route's key, what other config (kinematics, ferries, AIS) and URLs name it by. */
   key: z.string().min(1),
-  match: routeMatch,
+  /** Several: one route drawn for every GTFS route they match (Hullo's one route per direction). */
+  match: z.union([routeMatch, z.array(routeMatch).min(2)]),
   label: z.string().min(1).exactOptional(),
   kind: z.enum(routeKinds).exactOptional(),
   mode: z.enum(routeModes).exactOptional(),
@@ -250,20 +253,33 @@ const route = z.strictObject({
   kinematics: kinematicsOverride.exactOptional(),
 });
 
+const agenciesOf = (match: RouteMatch | readonly RouteMatch[]) => {
+  const matches = Array.isArray(match) ? match : [match];
+  return matches.map((m) => m.agency);
+};
+
 const routes = z.strictObject({
   /** The colour of routes without one of their own in the GTFS (default #666666; plan/routes.ts). */
   noColor: z
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/, "expected #rrggbb")
     .exactOptional(),
-  routes: z
-    .array(route)
-    .refine(
-      (rs) =>
-        new Set(rs.map((r) => `${r.key}@${r.match.agency ?? ""}`)).size
-        === rs.length,
-      "route keys must be unique (per agency, where entries match one)",
-    ),
+  routes: z.array(route).refine(
+    (rs) =>
+      rs.every((r, i) =>
+        rs.slice(i + 1).every((other) => {
+          if (r.key !== other.key) return true;
+          const agencies = agenciesOf(r.match);
+          const otherAgencies = agenciesOf(other.match);
+          return (
+            agencies.every((agency) => agency !== undefined)
+            && otherAgencies.every((agency) => agency !== undefined)
+            && !agencies.some((agency) => otherAgencies.includes(agency))
+          );
+        }),
+      ),
+    "route keys must be unique (per agency, where entries match one)",
+  ),
   /** Routes in the feed the plan leaves out: not drawn, not on cards, not tracked. */
   exclude: z.array(z.strictObject({ match: routeMatch })).exactOptional(),
 });
@@ -335,8 +351,8 @@ const carryShape = z.strictObject({
 });
 const carry: z.ZodType<CarryConfig> = carryShape;
 
-// How the map uses real-time data, resolved from config/defaults/rt.json, an operator's overrides
-// and a region's (resolveRt). How often each feed is polled, and the thresholds that follow from it,
+// How the map uses real-time data, resolved from config/defaults/rt.json and a feed's operator's
+// and its own overrides (resolveRt). How often each feed is polled, and the thresholds that follow from it,
 // are the feed's (feed.json → realtime).
 const rt = z.strictObject({
   clientPollS: pos,
@@ -347,7 +363,7 @@ const rt = z.strictObject({
   carry,
 });
 
-// --- seabus.json ---
+// --- ferries/<route>.json ---
 
 const aisMatch: z.ZodType<AisMatchConfig> = z.strictObject({
   maxOffsetM: pos,
@@ -372,10 +388,32 @@ const glide: z.ZodType<GlideConfig> = z.strictObject({
 
 const latLon = z.tuple([num.min(-90).max(90), num.min(-180).max(180)]);
 
-const seabus = z.strictObject({
-  /** The berth pair every vessel uses unless AIS shows otherwise (FerryConfig). */
-  defaultPair: z.string().min(1),
-});
+const lonLat = z.tuple([num.min(-180).max(180), num.min(-90).max(90)]);
+
+/**
+ * A ferry route's berths and lanes (config/feeds/<feed>/ferries/<route>.json), used instead of its
+ * GTFS shapes (packages/transit-core/src/plan/ferry-berths.ts).
+ */
+const ferry: z.ZodType<FerryInfra> = z
+  .strictObject({
+    route: z.string().min(1),
+    approachM: nonNeg,
+    terminals: z.record(
+      z.string().min(1),
+      z.strictObject({
+        berths: z.record(
+          z.string().min(1),
+          z.strictObject({ dock: lonLat, outBearing: num.min(0).max(360) }),
+        ),
+      }),
+    ),
+    lanes: z.record(z.string().regex(/^[^>]+>[^>]+$/), z.array(lonLat).min(1)),
+    defaultPair: z.string().min(1),
+  })
+  .refine(
+    (f) => Object.values(f.terminals).every((t) => t.berths[f.defaultPair]),
+    { message: "the default berth pair must be at every terminal" },
+  );
 
 /** A feed's vessels' AIS positions (feed.json → ais; packages/transit-core/DESIGN.md#seabus-ais). */
 const feedAis = z.strictObject({
@@ -406,8 +444,11 @@ const kinematicsLayer = z.strictObject({
   modes: z.record(z.string(), kinematicsOverride),
 });
 
-/** Overrides of config/defaults/rt.json that depend on the vehicles and data: prediction, carried delays, detours. */
+/** Overrides of config/defaults/rt.json: how the map polls, prediction, carried delays, detours. */
 const rtLayer = z.strictObject({
+  clientPollS: pos.exactOptional(),
+  clientPollMaxS: pos.exactOptional(),
+  clientPollSlackS: nonNeg.exactOptional(),
   prediction: prediction.partial().exactOptional(),
   carry: carryShape.partial().exactOptional(),
   detourNearM: pos.exactOptional(),
@@ -415,7 +456,7 @@ const rtLayer = z.strictObject({
 
 // --- config/feeds/<feed>/feed.json ---
 
-/** Ids of regions and feeds: they name directories, URL segments and database keys. */
+/** Ids of regions, feeds and rail networks: they name directories, URL segments and database keys. */
 const slug = z
   .string()
   .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "expected a lower-case-slug");
@@ -478,8 +519,19 @@ const feed = z.strictObject({
   name: z.string().min(1),
   /** Who runs the service (config/operators/<id>/operator.json). */
   operator: slug,
-  /** Must match the regions' showing it, and the feed's agency_timezone. */
+  /** Must match the feed's agency_timezone, and the time zone of any rail network it runs on. */
   timezone: z.string().min(1),
+  /**
+   * Known facts about the time zone that the runtime's tzdata must agree with: the server refuses to
+   * start otherwise (checkTimezoneData in time.ts).
+   */
+  timezoneChecks: z.array(
+    z.strictObject({
+      at: z.iso.datetime(),
+      utcOffsetMinutes: z.number().int(),
+      reason: z.string().min(1),
+    }),
+  ),
   /** The dataset registry id of its schedules (packages/shared/src/datasets.ts); real time is that dataset's `realtime`. */
   dataset: z.string().min(1),
   static: z
@@ -555,19 +607,7 @@ const operator = z.strictObject({
   rt: rtLayer.exactOptional(),
 });
 
-/**
- * A region's rt.json: settings about the place only (how its map polls), never about
- * the vehicles or their data, which are the feeds' and operators' (a region can show several).
- */
-const regionRt = rt
-  .pick({
-    clientPollS: true,
-    clientPollMaxS: true,
-    clientPollSlackS: true,
-  })
-  .partial();
-
-// --- config/regions/<id>/region.json ---
+// --- config/networks/<id>/network.json ---
 
 const lon = num.min(-180).max(180);
 const lat = num.min(-90).max(90);
@@ -576,11 +616,34 @@ const bounds = z
   .tuple([lon, lat, lon, lat])
   .refine(([w, s, e, n]) => w < e && s < n, "[west, south, east, north]");
 
+/**
+ * A rail network: physical track and how trains run on it (packages/transit-core/DESIGN.md#rail-networks).
+ * Feeds and networks are many to many: a feed can run on several networks, and a network carry
+ * several feeds' trains.
+ */
+const network = z.strictObject({
+  id: slug,
+  name: z.string().min(1),
+  /** Dispatch dates are its local service days. */
+  timezone: z.string().min(1),
+  /** How it's signalled: what the dispatcher models (only moving block so far). */
+  signalling: z.enum(["moving-block"]),
+  /** Where its track is fetched from OpenStreetMap (pipelines/fetch-osm.ts). */
+  bbox: bounds,
+  /** The feeds whose track-level routes (routes.json → kind "skytrain") run on it. */
+  feeds: z
+    .array(slug)
+    .min(1)
+    .refine((fs) => new Set(fs).size === fs.length, "feeds are listed once"),
+});
+
+// --- config/regions/<id>/region.json ---
+
+/** A view of /transit: where it opens and what it shows (the site's only use of regions). */
 const region = z
   .strictObject({
     id: slug,
     name: z.string().min(1),
-    timezone: z.string().min(1),
     /**
      * The feeds whose transit the region shows (config/feeds/<id>/). A feed can be in several regions (a
      * ferry between two), and it is fetched, built, polled and recorded once whichever regions show it.
@@ -627,13 +690,6 @@ const region = z
     areas: z.array(bounds).min(1).exactOptional(),
     /** The first view of /transit when the URL has no map position. */
     initialBounds: bounds,
-    timezoneChecks: z.array(
-      z.strictObject({
-        at: z.iso.datetime(),
-        utcOffsetMinutes: z.number().int(),
-        reason: z.string().min(1),
-      }),
-    ),
   })
   .refine(
     (r) =>
@@ -646,9 +702,9 @@ const region = z
 export type FeedInfo = z.output<typeof feed>;
 export type OperatorInfo = z.output<typeof operator>;
 export type FeedAis = z.output<typeof feedAis>;
-export type RegionRt = z.output<typeof regionRt>;
 export type FeedRealtime = z.output<typeof feedRealtime>;
 export type RegionInfo = z.output<typeof region>;
+export type NetworkInfo = z.output<typeof network>;
 
 function parsed<T>(schema: z.ZodType<T>, file: string, json: unknown): T {
   const r = schema.safeParse(stripComments(json));
@@ -662,11 +718,6 @@ function parsed<T>(schema: z.ZodType<T>, file: string, json: unknown): T {
 /** An operator's operator.json, checked. */
 export function parseOperator(json: unknown): OperatorInfo {
   return parsed(operator, "operator.json", json);
-}
-
-/** A region's rt.json (overrides of the defaults), checked. */
-export function parseRegionRt(json: unknown): RegionRt {
-  return parsed(regionRt, "region rt.json", json);
 }
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
@@ -707,18 +758,16 @@ export function resolveKinematics(
 }
 
 /**
- * Real-time settings for a feed in a region: config/defaults/rt.json, the feed's operator's
- * overrides, the feed's, then the region's (its rt.json, if it has one: settings about the place
- * only, so they never collide with the others). The result is checked whole.
+ * Real-time settings for a feed: config/defaults/rt.json, the feed's operator's overrides, then the
+ * feed's. The result is checked whole.
  */
 export function resolveRt(
   defaults: unknown,
   op: OperatorInfo,
   feed: Pick<FeedInfo, "rt">,
-  region?: RegionRt,
 ): Config<"rt"> {
   let merged = stripComments(defaults);
-  for (const layer of [op.rt, feed.rt, region])
+  for (const layer of [op.rt, feed.rt])
     merged = mergeLayers(merged, layer ?? {});
   return parseConfig("rt", merged);
 }
@@ -731,6 +780,11 @@ export function parseFeed(json: unknown): FeedInfo {
 /** A region's region.json, checked. */
 export function parseRegion(json: unknown): RegionInfo {
   return parsed(region, "region.json", json);
+}
+
+/** A rail network's network.json, checked. */
+export function parseNetwork(json: unknown): NetworkInfo {
+  return parsed(network, "network.json", json);
 }
 
 /** A feed's real-time URL with its key filled in. Never log or return the result. */
@@ -757,7 +811,7 @@ export const CONFIG_SCHEMAS = {
   recording,
   routes,
   rt,
-  seabus,
+  ferry,
   server,
 } as const;
 

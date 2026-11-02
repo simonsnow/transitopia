@@ -180,25 +180,23 @@ export const VehicleCard: React.FC<{
       // The URL already names the selected vehicle and the shown time.
       onSelect: () => shareLink(location.href, `${route.label} · Transitopia`),
     },
-    // An overlay feed's vehicle (a BC Ferries vessel) has no route card yet.
-    ...(sel.overlay ?
-      []
-    : [
-        {
-          id: "route",
-          label: `View route: ${route.label}`,
-          lead: <RouteBadge route={route} colors={colors} />,
-          onSelect: () =>
-            engine.open({ place: { kind: "route", id: route.key } }, title),
-        },
-      ]),
+    {
+      id: "route",
+      label: `View route: ${route.label}`,
+      lead: <RouteBadge route={route} colors={colors} />,
+      onSelect: () =>
+        engine.open(
+          { place: { kind: "route", feed: route.feed, id: route.key } },
+          title,
+        ),
+    },
   ];
   const details: [string, string | undefined][] = [
     // "08:05 from Langford Exchange · 11898518": as a rider names it, with the agency's short id.
     [
       "Trip",
       sel.trip ?
-        `${clockMinutes(sel.trip.start)} from ${sel.trip.from} · ${sel.trip.shortId}`
+        `${clockMinutes(sel.trip.start, snap.timezone)} from ${sel.trip.from} · ${sel.trip.shortId}`
       : v.tripId || undefined,
     ],
     ["Train (inferred run)", v.runId],
@@ -259,25 +257,19 @@ export const VehicleCard: React.FC<{
             // Opens the route card, with a back strip returning here (apps/web/README.md#cross-references).
             // One line: a long name ("620 Tsawwassen Ferry/Bridgeport Station Express") ends in an
             // ellipsis, in full in the tooltip.
-            sel.overlay ?
-              <span
-                className="h-[26px] min-w-0 truncate rounded-md px-[9px] text-[13px] leading-[26px] font-bold"
-                style={{ background: colors.bg, color: colors.fg }}>
-                {route.label}
-              </span>
-            : <button
-                type="button"
-                title={`View route: ${route.label}`}
-                className="h-[26px] min-w-0 truncate rounded-md px-[9px] text-[13px] leading-[26px] font-bold hover:shadow-[inset_0_0_0_100px_rgb(0_0_0/0.12)]"
-                style={{ background: colors.bg, color: colors.fg }}
-                onClick={() =>
-                  engine.open(
-                    { place: { kind: "route", id: route.key } },
-                    title,
-                  )
-                }>
-                {route.label}
-              </button>
+            <button
+              type="button"
+              title={`View route: ${route.label}`}
+              className="h-[26px] min-w-0 truncate rounded-md px-[9px] text-[13px] leading-[26px] font-bold hover:shadow-[inset_0_0_0_100px_rgb(0_0_0/0.12)]"
+              style={{ background: colors.bg, color: colors.fg }}
+              onClick={() =>
+                engine.open(
+                  { place: { kind: "route", feed: route.feed, id: route.key } },
+                  title,
+                )
+              }>
+              {route.label}
+            </button>
           }
         />
         {details.map(([label, value]) =>

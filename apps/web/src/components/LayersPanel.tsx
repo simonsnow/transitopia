@@ -8,21 +8,50 @@ import { createPortal } from "react-dom";
 const LayersPanelContext = React.createContext<{
   open: boolean;
   setOpen: (open: boolean) => void;
+  /** Whether this browser has ever opened a layers panel (the mode switch's tip waits for it). */
+  seen: boolean;
   /** The element inside the header that the panel is rendered into. */
   host: HTMLElement | null;
   setHost: (el: HTMLElement | null) => void;
-}>({ open: false, setOpen: () => {}, host: null, setHost: () => {} });
+}>({
+  open: false,
+  setOpen: () => {},
+  seen: true,
+  host: null,
+  setHost: () => {},
+});
 
 export const useLayersPanel = () => React.useContext(LayersPanelContext);
+
+const SEEN_KEY = "transitopia:layers-panel-seen";
+
+function loadSeen(): boolean {
+  try {
+    return JSON.parse(localStorage.getItem(SEEN_KEY) ?? "false") === true;
+  } catch {
+    return false; // Storage unavailable: the tip shows each visit.
+  }
+}
 
 export const LayersPanelProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpenState] = React.useState(false);
+  const [seen, setSeen] = React.useState(loadSeen);
   const [host, setHost] = React.useState<HTMLElement | null>(null);
+  const setOpen = React.useCallback((next: boolean) => {
+    setOpenState(next);
+    if (!next) return;
+    setSeen(true);
+    try {
+      localStorage.setItem(SEEN_KEY, JSON.stringify(true));
+    } catch {
+      // Preferences are optional.
+    }
+  }, []);
   const value = React.useMemo(
-    () => ({ open, setOpen, host, setHost }),
-    [open, host],
+    () => ({ open, setOpen, seen, host, setHost }),
+    [open, setOpen, seen, host],
   );
   return (
     <LayersPanelContext.Provider value={value}>
@@ -43,8 +72,10 @@ export const LAYERS_PANEL_ID = "layers-panel";
 export const LayersPanel: React.FC<{
   /** "Transit layers": the panel's name, and its heading on phones. */
   label: string;
+  /** The rows come in sections with their own headings (`PanelHeading`), so the panel's "Show" is left out. */
+  sectioned?: boolean | undefined;
   children: React.ReactNode;
-}> = ({ label, children }) => {
+}> = ({ label, sectioned, children }) => {
   const { open, setOpen, host } = useLayersPanel();
   const ref = React.useRef<HTMLElement>(null);
 
@@ -92,9 +123,9 @@ export const LayersPanel: React.FC<{
             Done
           </button>
         </div>
-        <h2 className="px-4 pt-2 pb-1 text-xs font-bold uppercase tracking-wider text-gray-500 max-sm:hidden dark:text-gray-400">
-          Show
-        </h2>
+        {sectioned ? null : (
+          <h2 className={`${HEADING} max-sm:hidden`}>Show</h2>
+        )}
         {children}
       </section>
     </>,
@@ -156,6 +187,14 @@ export const SwitchRow: React.FC<{
     <SwitchKnob on={on && !disabled} />
   </button>
 );
+
+const HEADING =
+  "px-4 pt-2 pb-1 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400";
+
+/** A section's heading, in a `sectioned` panel. */
+export const PanelHeading: React.FC<{ children: React.ReactNode }> = ({
+  children,
+}) => <h3 className={HEADING}>{children}</h3>;
 
 export const PanelDivider: React.FC = () => (
   <div className="mx-4 my-1.5 h-px bg-gray-200 dark:bg-gray-700" />
