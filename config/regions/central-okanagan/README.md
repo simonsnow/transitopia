@@ -1,10 +1,10 @@
 # Okanagan
 
-This bus-only region keeps the stable id `central-okanagan` for existing data URLs. Its region-selection bbox covers the Kelowna Regional Transit System; its stable feed id, `bc-transit-kelowna` ([config/feeds/bc-transit-kelowna/](../../feeds/bc-transit-kelowna/)), retains the merged Okanagan and Shuswap systems so routes and transfers between connected systems remain in one feed ([docs/DESIGN.md → Feeds, operators and rail networks](../../docs/DESIGN.md#feeds-operators-and-rail-networks)).
+This bus-only region keeps the stable id `central-okanagan` for existing data URLs. Its region-selection bbox covers BC Transit's South Okanagan-Similkameen, Kelowna, and North Okanagan/Shuswap systems, from Osoyoos to Lake Country; its stable feed id, `bc-transit-kelowna` ([config/feeds/bc-transit-kelowna/](../../feeds/bc-transit-kelowna/)), retains the merged Okanagan and Shuswap systems so routes and transfers between connected systems remain in one feed ([docs/DESIGN.md → Feeds, operators and rail networks](../../docs/DESIGN.md#feeds-operators-and-rail-networks)).
 
 | Path | What |
 |---|---|
-| `region.json` | bbox (Peachland to Lake Country), the first view of `/transit`, and its feed (time zone data checks are the feed's) |
+| `region.json` | bbox (Osoyoos to Lake Country), the first view of `/transit`, and its feed (time zone data checks are the feed's) |
 | Settings | None of its own yet: vehicles and real-time use come from [config/defaults/](../../defaults/) and BC Transit's [operator.json](../../operators/bc-transit/operator.json), each with a source or "guess" and a cross-reference to [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) |
 
 Drawn routes: every route in the feed, with the **97 Okanagan RapidBus** in its own colour (`config/feeds/bc-transit-kelowna/routes.json`) and the rest in their GTFS colours. This includes Peachland and the South Okanagan communities such as Penticton, Oliver, and Osoyoos. Buses are live from BC Transit's GTFS-realtime where the server polls it, estimated from the timetable otherwise.

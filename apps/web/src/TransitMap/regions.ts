@@ -149,9 +149,9 @@ export function lngLatBounds(
 }
 
 /**
- * The region the view shows most of (by the area of its areas in view, region.json), or undefined
- * if the view overlaps none. Regions don't overlap (a test checks), so near one region this is that
- * region.
+ * The region containing the view's center, or otherwise the region covering most of its area.
+ * Display areas don't overlap (a test checks); the center rule keeps narrow cross-border areas
+ * usable when the rest of the viewport overlaps more of the neighbouring region.
  */
 export function regionInView(view: {
   west: number;
@@ -159,6 +159,16 @@ export function regionInView(view: {
   east: number;
   north: number;
 }): SiteRegion | undefined {
+  const centerLng = (view.west + view.east) / 2;
+  const centerLat = (view.south + view.north) / 2;
+  const containing = REGIONS.find((r) =>
+    (r.info.areas ?? [r.info.bbox]).some(
+      ([w, s, e, n]) =>
+        centerLng >= w && centerLng <= e && centerLat >= s && centerLat <= n,
+    ),
+  );
+  if (containing) return containing;
+
   let best: { r: SiteRegion; area: number } | undefined;
   for (const r of REGIONS) {
     let area = 0;

@@ -24,9 +24,9 @@
       "tripUpdates": "https://bct.tmix.se/gtfs-realtime/tripupdates.pb?operatorIds=13",
       "alerts": "https://bct.tmix.se/gtfs-realtime/alerts.pb?operatorIds=13"
     },
-    "$poll": "Positions and trip updates every 2 minutes while buses run (05:00-24:00), every 5 overnight; alerts every 5 minutes, 15 overnight. Every 2 minutes is the default for BC Transit systems other than Victoria and Kelowna (Braden MacDonald, 2026-11-01; config/operators/bc-transit/operator.json): smaller systems, less often. About 1,510 requests a day; dailyCap is a safety net. OPEN-QUESTIONS #2.",
+    "$poll": "Positions and trip updates every 2 minutes while buses run (05:00-24:00), every 5 overnight; alerts every 5 minutes, 15 overnight. Every 2 minutes is the default for BC Transit systems other than Victoria and Kelowna (Braden MacDonald, 2026-11-01; config/operators/bc-transit/operator.json): smaller systems, less often. About 1,510 requests a day; the 4,000-request dailyCap is a safety net and lets requests from the previous faster schedule age out. OPEN-QUESTIONS #2.",
     "poll": {
-      "dailyCap": 2000,
+      "dailyCap": 4000,
       "weekday": [
         { "from": "00:00", "positionsS": 300, "tripUpdatesS": 300, "alertsS": 900 },
         { "from": "05:00", "positionsS": 120, "tripUpdatesS": 120, "alertsS": 300 }

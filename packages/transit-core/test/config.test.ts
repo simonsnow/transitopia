@@ -307,11 +307,29 @@ describe("regions, feeds and rail networks", () => {
     }
   });
 
-  it("keeps the Fraser Valley display area east of Metro Vancouver's bbox", () => {
+  it("keeps the Fraser Valley display areas disjoint from Metro Vancouver except at Mission", () => {
     const metro = regions.find((r) => r.id === "metro-vancouver")!.region;
     const fraser = regions.find((r) => r.id === "fraser-valley")!.region;
-    expect(metro.areas).toBeUndefined();
-    expect(fraser.areas).toEqual([[-122.0, 48.95, -121.3, 49.55]]);
+    const fraserAreas = fraser.areas ?? [];
+    expect(metro.areas).toEqual([
+      [-123.45, 48.95, -122.45, 49.55],
+      [-122.45, 49.05, -122.15, 49.22],
+    ]);
+    expect(fraserAreas).toEqual([
+      [-122.45, 48.99, -121.38, 49.05],
+      [-122.45, 49.22, -121.38, 49.42],
+      [-122.15, 49.05, -121.38, 49.22],
+    ]);
+    expect(
+      fraserAreas.some(
+        ([w, s, e, n]) => w < -122.15 && -122.45 < e && s < 49.22 && 49.05 < n,
+      ),
+    ).toBe(false);
+  });
+
+  it("includes the South Okanagan's bus routes in the region-selection bbox", () => {
+    const region = regions.find((r) => r.id === "central-okanagan")!.region;
+    expect(region.bbox[1]).toBeLessThan(49.1);
   });
 
   it("fills in a key, and refuses URLs that don't agree with apiKey", () => {

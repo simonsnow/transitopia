@@ -2,6 +2,8 @@
 
 Where `/transit` opens, showing TransLink's feed ([config/feeds/translink/](../../feeds/translink/README.md)) and Hullo's ferry to Nanaimo ([config/feeds/hullo/](../../feeds/hullo/README.md)). A region is only a view now ([docs/DESIGN.md → Feeds, operators and rail networks](../../../docs/DESIGN.md#feeds-operators-and-rail-networks)):
 
+Its display areas include Mission City Station, where the TransLink feed's West Coast Express line connects with BC Transit's Fraser Valley routes. This keeps the WCE visible when the map is zoomed in on Mission.
+
 | Path | What |
 |---|---|
 | `region.json` | Its name, bbox, the first view of `/transit`, and its feeds |
