@@ -2,13 +2,8 @@
 // route by default, modelled from its GTFS route_type, with the feed's routes.json overriding some
 // (matched by name, never route_id) and excluding others.
 
-import type { Config, RouteConfig, RouteMatch } from "../config.ts";
-import {
-  routeName,
-  type PlanRoute,
-  type RouteKind,
-  type RouteMode,
-} from "./types.ts";
+import type { Config, FeedInfo, RouteConfig, RouteMatch } from "../config.ts";
+import type { PlanRoute, RouteKind, RouteMode } from "./types.ts";
 
 /** The routes.txt fields this reads. */
 export interface GtfsRouteRow {
@@ -110,36 +105,34 @@ export interface RouteSelection {
 }
 
 /**
- * The plan's routes from a feed's routes.txt and its routes.json. Sorted by group (rail and
- * ferries, buses in their own colour, other buses), then as listed in routes.json, then by key, numbers in order.
- * Throws when an entry matches more than one route unless its `match` lists several; those GTFS rows
- * become one route, with the others in `mergedGtfsRouteIds`, or when two routes would share a key.
- *
- * In a feed of several agencies (a feed made of parts, feed.json → static.parts), each system has
- * its own route 1: keys are qualified by the agency ("1@comox-valley"), and `name` is what riders
- * see ("1").
+ * The plan's routes from a feed's routes.txt and its routes.json, keyed as the feed says (feed.json →
+ * routeKey: by name, else by route_id, with the name as `shortName`). Sorted by group (rail and
+ * ferries, buses in their own colour, other buses), then as listed in routes.json, then by key, numbers in order. Throws when an
+ * entry matches more than one route (unless its `match` lists several: then they're one route, the
+ * first one's, with the others in `mergedGtfsRouteIds`), or two routes would share a key.
  */
 export function selectRoutes(
   rows: readonly GtfsRouteRow[],
   cfg: Config<"routes">,
   feed: string,
   dataset: string | undefined,
+  keyBy: FeedInfo["routeKey"] = "name",
 ): RouteSelection {
   const routes: PlanRoute[] = [];
   const skipped: RouteSelection["skipped"] = [];
   const used = new Set<RouteConfig>();
   const routeByOverride = new Map<RouteConfig, PlanRoute>();
-  const agencies = new Set(rows.map((r) => r.agency_id ?? ""));
-  // An agency giving all its routes one colour has none of its own: it's a placeholder (BC
-  // Transit's Sunshine Coast and qathet give every route 000000).
   const colorsOf = new Map<string, string[]>();
-  for (const r of rows) {
-    const a = r.agency_id ?? "";
-    colorsOf.set(a, [...(colorsOf.get(a) ?? []), r.route_color ?? ""]);
+  for (const row of rows) {
+    const agency = row.agency_id ?? "";
+    colorsOf.set(agency, [
+      ...(colorsOf.get(agency) ?? []),
+      row.route_color ?? "",
+    ]);
   }
-  const placeholder = (row: GtfsRouteRow) => {
-    const cs = colorsOf.get(row.agency_id ?? "")!;
-    return cs.length > 1 && new Set(cs).size === 1;
+  const placeholderColor = (row: GtfsRouteRow) => {
+    const colors = colorsOf.get(row.agency_id ?? "") ?? [];
+    return colors.length > 1 && new Set(colors).size === 1;
   };
   for (const row of rows) {
     if (cfg.exclude?.some((x) => matches(row, x.match))) {
@@ -156,6 +149,7 @@ export function selectRoutes(
       (into.mergedGtfsRouteIds ??= []).push(row.route_id!);
       continue;
     }
+    if (over) used.add(over);
     const model = defaultModel(row.route_type);
     if (!model && !(over?.kind && over.mode)) {
       skipped.push({
@@ -164,53 +158,49 @@ export function selectRoutes(
       });
       continue;
     }
-    const name = over?.key ?? defaultKey(row);
-    if (!name) {
+    const name = defaultKey(row);
+    const key = over?.key ?? (keyBy === "route_id" ? row.route_id : name);
+    if (!key) {
       skipped.push({
         row,
         reason: "no name to key it by: add it to routes.json",
       });
       continue;
     }
-    const key = agencies.size > 1 ? `${name}@${row.agency_id ?? ""}` : name;
     if (routes.some((r) => r.key === key))
       throw new Error(
         `Two routes have the key ${key} (GTFS route ${row.route_id}): give one a key in routes.json`,
       );
     const mode = over?.mode ?? model!.mode;
-    const route: PlanRoute = {
+    const shortName = name && name !== key ? name : undefined;
+    routes.push({
       feed,
       key,
-      name,
-      label: over?.label ?? defaultLabel(row, name),
+      ...(shortName ? { shortName } : {}),
+      label: over?.label ?? defaultLabel(row, shortName ?? key),
       ...(over?.vehicles === false ? { vehicles: false as const } : {}),
       kind: over?.kind ?? model!.kind,
       mode,
       brand: over?.brand ?? mode !== "bus",
       color:
         over?.color
-        ?? (placeholder(row) ?
+        ?? (placeholderColor(row) ?
           (cfg.noColor ?? NO_COLOR)
         : hexColor(row.route_color, cfg.noColor ?? NO_COLOR)),
       textColor: hexColor(row.route_text_color, "#ffffff"),
       gtfsRouteId: row.route_id!,
       ...(dataset ? { dataset } : {}),
-    };
-    routes.push(route);
-    if (over) {
-      used.add(over);
-      routeByOverride.set(over, route);
-    }
+    });
+    if (over) routeByOverride.set(over, routes[routes.length - 1]!);
   }
-  const listed = (r: PlanRoute) => {
-    const i = cfg.routes.findIndex((c) => c.key === routeName(r));
+  const listed = (key: string) => {
+    const i = cfg.routes.findIndex((c) => c.key === key);
     return i < 0 ? Infinity : i;
   };
   routes.sort(
     (a, b) =>
       groupOf(a) - groupOf(b)
-      || listed(a) - listed(b)
-      || byNumber.compare(routeName(a), routeName(b))
+      || listed(a.key) - listed(b.key)
       || byNumber.compare(a.key, b.key),
   );
   return {

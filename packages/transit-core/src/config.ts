@@ -1,8 +1,7 @@
 // The committed config (config/: docs/DESIGN.md#feeds-operators-and-rail-networks): global defaults
 // (config/defaults/), operators (config/operators/<id>/operator.json), feeds
 // (config/feeds/<id>/feed.json, routes.json, ferries/<route>.json), rail networks
-// (config/networks/<id>/network.json, operations.json, dispatch.json) and regions
-// (config/regions/<id>/region.json): one schema each,
+// (config/networks/<id>/network.json, operations.json, dispatch.json): one schema each,
 // checked wherever a file is loaded (site, server, pipelines) and by a test over every committed file,
 // so a misspelled or mistyped setting fails loudly instead of reading as undefined. Keys starting with
 // "$" are comments (the files cite their sources there) and are dropped before checking, at any depth.
@@ -218,7 +217,7 @@ const routeMatch = z
   .strictObject({
     route_long_name: z.string().min(1).exactOptional(),
     route_short_name: z.string().min(1).exactOptional(),
-    /** In a feed made of parts (feed.json → static.parts): the part's `agency`, with a name. */
+    /** In the GTFS: its agency_id. */
     agency: z.string().min(1).exactOptional(),
   })
   .refine(
@@ -251,12 +250,9 @@ const route = z.strictObject({
     .exactOptional(),
   /** Overrides of its mode's vehicle settings (config/defaults/kinematics.json, then its operator's). */
   kinematics: kinematicsOverride.exactOptional(),
+  /** Its trips' headsigns as shown, by GTFS trip_headsign, where the GTFS's aren't words (Hullo's "VAN"). */
+  headsigns: z.record(z.string(), z.string().min(1)).exactOptional(),
 });
-
-const agenciesOf = (match: RouteMatch | readonly RouteMatch[]) => {
-  const matches = Array.isArray(match) ? match : [match];
-  return matches.map((m) => m.agency);
-};
 
 const routes = z.strictObject({
   /** The colour of routes without one of their own in the GTFS (default #666666; plan/routes.ts). */
@@ -264,22 +260,12 @@ const routes = z.strictObject({
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/, "expected #rrggbb")
     .exactOptional(),
-  routes: z.array(route).refine(
-    (rs) =>
-      rs.every((r, i) =>
-        rs.slice(i + 1).every((other) => {
-          if (r.key !== other.key) return true;
-          const agencies = agenciesOf(r.match);
-          const otherAgencies = agenciesOf(other.match);
-          return (
-            agencies.every((agency) => agency !== undefined)
-            && otherAgencies.every((agency) => agency !== undefined)
-            && !agencies.some((agency) => otherAgencies.includes(agency))
-          );
-        }),
-      ),
-    "route keys must be unique (per agency, where entries match one)",
-  ),
+  routes: z
+    .array(route)
+    .refine(
+      (rs) => new Set(rs.map((r) => r.key)).size === rs.length,
+      "route keys must be unique within a feed",
+    ),
   /** Routes in the feed the plan leaves out: not drawn, not on cards, not tracked. */
   exclude: z.array(z.strictObject({ match: routeMatch })).exactOptional(),
 });
@@ -456,7 +442,7 @@ const rtLayer = z.strictObject({
 
 // --- config/feeds/<feed>/feed.json ---
 
-/** Ids of regions, feeds and rail networks: they name directories, URL segments and database keys. */
+/** Ids of feeds, operators and rail networks: they name directories, URL segments and database keys. */
 const slug = z
   .string()
   .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "expected a lower-case-slug");
@@ -503,16 +489,6 @@ const shortPattern = z.string().refine((p) => {
   }
 }, "expected a regular expression with a group");
 
-/** One of a merged feed's sources (`static.parts`). */
-const feedPart = z.strictObject({
-  /** Its agency_id in the merged feed, and what routes.json matches by (`match.agency`). */
-  agency: slug,
-  /** How riders know it ("Comox Valley"): its agency_name in the merged feed. */
-  name: z.string().min(1),
-  /** Its latest GTFS feed. */
-  url: httpsUrl,
-});
-
 const feed = z.strictObject({
   id: slug,
   /** How the site names the feed, e.g. "BC Transit (Victoria)". */
@@ -521,6 +497,12 @@ const feed = z.strictObject({
   operator: slug,
   /** Must match the feed's agency_timezone, and the time zone of any rail network it runs on. */
   timezone: z.string().min(1),
+  /**
+   * Other zones its GTFS may name, taken as `timezone`: fetch-gtfs renames them in merged exports, and
+   * build-schedule refuses the feed unless the runtime's tzdata gives them `timezone`'s UTC offset on
+   * every date of the timetable.
+   */
+  equivalentTimezones: z.array(z.string().min(1)).min(1).exactOptional(),
   /**
    * Known facts about the time zone that the runtime's tzdata must agree with: the server refuses to
    * start otherwise (checkTimezoneData in time.ts).
@@ -534,49 +516,34 @@ const feed = z.strictObject({
   ),
   /** The dataset registry id of its schedules (packages/shared/src/datasets.ts); real time is that dataset's `realtime`. */
   dataset: z.string().min(1),
-  static: z
-    .strictObject({
+  static: z.union([
+    z.strictObject({
       /** The latest GTFS feed. */
-      url: httpsUrl.exactOptional(),
-      /**
-       * Instead of `url`: a GTFS we wrote ourselves, its files committed in this directory of the
-       * feed's (config/feeds/<feed>/<dir>/), for service published only as a web page (BC's inland
-       * ferries). fetch-gtfs zips it.
-       */
-      dir: z
-        .string()
-        .regex(/^[a-z0-9-]+$/, "a directory name")
-        .exactOptional(),
+      url: httpsUrl,
       /** A dated snapshot ({date}: YYYY-MM-DD), where the provider keeps them. */
       historyUrl: z.string().includes("{date}").exactOptional(),
-      /**
-       * The agency_timezone the GTFS states, where it isn't the one its times are in: they're read
-       * in `timezone` (BC Ferries' says America/Los_Angeles, which BC no longer agrees with).
-       */
+      /** agency.txt's declared zone when the feed's service times use its configured timezone instead. */
       statedTimezone: z.string().min(1).exactOptional(),
+    }),
+    z.strictObject({
       /**
-       * Instead of `url`: several GTFS feeds that fetch-gtfs merges into one, each its own agency
-       * (packages/data/src/gtfs-merge.ts), e.g. a provider's transit systems that meet. Where two
-       * have a row with the same key (a stop both use), the one listed first is kept.
+       * The latest GTFS of each of several exports, merged into one feed by fetch-gtfs
+       * (packages/data/src/gtfs-merge.ts): for a provider that publishes its systems one by one
+       * and can't combine them (BC Transit).
        */
-      parts: z
-        .array(feedPart)
-        .min(2)
-        .refine(
-          (ps) => new Set(ps.map((p) => p.agency)).size === ps.length,
-          "each part's agency is listed once",
-        )
-        .exactOptional(),
-    })
-    .refine(
-      (s) =>
-        [s.url, s.parts, s.dir].filter((x) => x !== undefined).length === 1,
-      "static needs one of url, parts and dir",
-    )
-    .refine(
-      (s) => s.historyUrl === undefined || s.url !== undefined,
-      "historyUrl needs url",
-    ),
+      merge: z.array(httpsUrl).min(2),
+    }),
+    z.strictObject({
+      /** A curated GTFS under the feed's config directory (used for schedules not published as GTFS). */
+      dir: slug,
+    }),
+  ]),
+  /**
+   * What its routes are keyed by (packages/transit-core/DESIGN.md#routes): their name, by default,
+   * or their route_id, for a feed whose systems each number their routes from 1, so names clash.
+   * Feature reconciliation matches routes by the same.
+   */
+  routeKey: z.enum(["name", "route_id"]).exactOptional(),
   /** GTFS-realtime, polled by the server's leader only (docs/DESIGN.md#upstream-request-budget). */
   realtime: feedRealtime.exactOptional(),
   /** Its vessels' AIS positions, streamed by the server's leader (aisstream.io). */
@@ -637,22 +604,15 @@ const network = z.strictObject({
     .refine((fs) => new Set(fs).size === fs.length, "feeds are listed once"),
 });
 
-// --- config/regions/<id>/region.json ---
-
-/** A view of /transit: where it opens and what it shows (the site's only use of regions). */
+/** A legacy view retained for the server's `/regions/*` compatibility endpoints. */
 const region = z
   .strictObject({
     id: slug,
     name: z.string().min(1),
-    /**
-     * The feeds whose transit the region shows (config/feeds/<id>/). A feed can be in several regions (a
-     * ferry between two), and it is fetched, built, polled and recorded once whichever regions show it.
-     */
     feeds: z
       .array(slug)
       .min(1)
       .refine((fs) => new Set(fs).size === fs.length, "feeds are listed once"),
-    /** Previous public region/feed ids that remain available as API aliases. */
     aliases: z
       .array(
         z.strictObject({
@@ -680,15 +640,8 @@ const region = z
         "alias feed ids are unique",
       )
       .exactOptional(),
-    /** Where the region's transit data applies. */
     bbox: bounds,
-    /**
-     * Where the site shows this region, as rectangles inside the bbox, for a region whose shape a
-     * single rectangle can't follow without covering another region's (docs/DESIGN.md#regions-and-feeds);
-     * absent, the bbox. Regions' areas don't overlap.
-     */
     areas: z.array(bounds).min(1).exactOptional(),
-    /** The first view of /transit when the URL has no map position. */
     initialBounds: bounds,
   })
   .refine(
@@ -777,7 +730,7 @@ export function parseFeed(json: unknown): FeedInfo {
   return parsed(feed, "feed.json", json);
 }
 
-/** A region's region.json, checked. */
+/** A legacy region's region.json, checked for server API compatibility. */
 export function parseRegion(json: unknown): RegionInfo {
   return parsed(region, "region.json", json);
 }

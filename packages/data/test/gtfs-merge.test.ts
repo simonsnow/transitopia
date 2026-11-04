@@ -1,111 +1,152 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { zipSync, strToU8 } from "fflate";
-import { afterAll, describe, expect, it } from "vitest";
+import { pipeline } from "node:stream/promises";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import yazl from "yazl";
 import { mergeGtfs } from "../src/gtfs-merge.ts";
 import { readCsvAll, zipSignature } from "../src/gtfs-zip.ts";
 
-const dir = await mkdtemp(join(tmpdir(), "gtfs-merge-"));
+let dir: string;
+beforeAll(async () => {
+  dir = await mkdtemp(join(tmpdir(), "gtfs-merge-test-"));
+});
 afterAll(() => rm(dir, { recursive: true, force: true }));
 
-async function feed(name: string, files: Record<string, string>) {
-  const path = join(dir, `${name}.zip`);
-  await writeFile(
-    path,
-    zipSync(
-      Object.fromEntries(
-        Object.entries(files).map(([f, text]) => [f, strToU8(text)]),
-      ),
-    ),
-  );
+/** A GTFS zip of CSV files, by name. */
+async function zip(name: string, files: Record<string, string>) {
+  const z = new yazl.ZipFile();
+  for (const [f, text] of Object.entries(files))
+    z.addBuffer(Buffer.from(text), f);
+  z.end();
+  const path = join(dir, name);
+  await pipeline(z.outputStream, createWriteStream(path));
   return path;
 }
 
-const agency =
-  "agency_id,agency_name,agency_url,agency_timezone\n0,BCTransit,https://www.bctransit.com/,America/Vancouver\n";
-
-const vic = await feed("vic", {
-  "agency.txt": agency,
+// Two systems' exports, as BC Transit's: one shared stop (written a little differently) and one
+// shared service.
+const comox = {
   "feed_info.txt":
-    "feed_publisher_name,feed_version,feed_start_date,feed_end_date\nConsat,202610280/a,20261026,20270331\n",
-  "routes.txt": "route_id,route_short_name,route_type\n1-VIC,1,3\n",
-  "stops.txt":
-    'stop_id,stop_name,stop_lat,stop_lon\n100003,"Legislature Exch, Bay D",48.41915,-123.36896\n',
-  "calendar_dates.txt": "service_id,date,exception_type\n5454,20261101,1\n",
-  "trips.txt": "route_id,service_id,trip_id\n1-VIC,5454,t1\n",
-});
-const cow = await feed("cow", {
-  "agency.txt": agency,
-  "feed_info.txt":
-    "feed_publisher_name,feed_version,feed_start_date,feed_end_date\nConsat,202610270/b,20261020,20261231\n",
+    "feed_publisher_name,feed_version,feed_start_date,feed_end_date\nConsat,202611020/a,20261031,20270331\n",
+  "agency.txt": "agency_id,agency_name\n0,BCTransit\n",
   "routes.txt":
-    "route_id,route_short_name,route_type,route_color\n1-COW,1,3,004B8D\n",
+    "route_id,route_short_name,route_long_name\n1-COM,1,Comox Mall\n",
   "stops.txt":
-    "stop_id,stop_name,stop_lat,stop_lon\n100003,Legislature Terminal,48.41914,-123.36894\n200001,Duncan,48.78,-123.7\n",
+    'stop_id,stop_name,stop_lat\n111486,Downtown Courtenay,49.69\n104033,"Village Green Mall, Bay A",48.77465\n',
+  "trips.txt": "route_id,service_id,trip_id\n1-COM,5484,t1\n",
+  "stop_times.txt": "trip_id,stop_id,stop_sequence\nt1,111486,1\nt1,104033,2\n",
   "calendar_dates.txt":
-    "service_id,date,exception_type\n5454,20261101,1\n6000,20261102,1\n",
-  "trips.txt": "route_id,service_id,trip_id\n1-COW,6000,t2\n",
-});
-const parts = [
-  { agency: "victoria", name: "Victoria", path: vic },
-  { agency: "cowichan-valley", name: "Cowichan Valley", path: cow },
-];
+    "service_id,date,exception_type\n5484,20261102,1\n5484,20261103,1\n",
+};
+const campbell = {
+  "feed_info.txt":
+    "feed_publisher_name,feed_version,feed_start_date,feed_end_date\nConsat,202611020/a,20261029,20270905\n",
+  "agency.txt": "agency_id,agency_name\n0,BCTransit\n",
+  "routes.txt":
+    "route_id,route_short_name,route_long_name,route_color\n1-CAM,1,Campbellton,004B8D\n",
+  "stops.txt":
+    'stop_id,stop_name,stop_lat\n104033,"Village Green Mall, Bay A",48.77503\n120001,Willow Point,50.0\n',
+  "trips.txt": "route_id,service_id,trip_id\n1-CAM,5484,t2\n",
+  "stop_times.txt": "trip_id,stop_id,stop_sequence\nt2,104033,1\nt2,120001,2\n",
+  "calendar_dates.txt":
+    "service_id,date,exception_type\n5484,20261102,1\n5484,20261103,1\n",
+};
 
 describe("mergeGtfs", () => {
-  it("makes each part an agency, keeps the first row of each id, and covers the dates every part does", async () => {
-    const out = join(dir, "out.zip");
-    await mergeGtfs(parts, out);
-    expect(await readCsvAll(out, "agency.txt")).toEqual([
-      expect.objectContaining({
-        agency_id: "victoria",
-        agency_name: "Victoria",
-      }),
-      expect.objectContaining({
-        agency_id: "cowichan-valley",
-        agency_name: "Cowichan Valley",
-        agency_timezone: "America/Vancouver",
-      }),
-    ]);
+  it("merges exports, the first winning a stop they write differently", async () => {
+    const out = join(dir, "merged.zip");
+    const report = await mergeGtfs(
+      [await zip("comox.zip", comox), await zip("campbell.zip", campbell)],
+      out,
+    );
+    expect(report.keptFirst).toEqual({ "stops.txt": 1 });
     expect(await readCsvAll(out, "routes.txt")).toEqual([
       {
-        agency_id: "victoria",
-        route_id: "1-VIC",
+        route_id: "1-COM",
         route_short_name: "1",
-        route_type: "3",
+        route_long_name: "Comox Mall",
         route_color: "",
       },
       {
-        agency_id: "cowichan-valley",
-        route_id: "1-COW",
+        route_id: "1-CAM",
         route_short_name: "1",
-        route_type: "3",
+        route_long_name: "Campbellton",
         route_color: "004B8D",
       },
     ]);
-    // The shared stop is Victoria's (listed first), its name with a comma intact.
+    const stops = await readCsvAll(out, "stops.txt");
+    expect(stops.map((s) => [s.stop_id, s.stop_name, s.stop_lat])).toEqual([
+      ["111486", "Downtown Courtenay", "49.69"],
+      ["104033", "Village Green Mall, Bay A", "48.77465"],
+      ["120001", "Willow Point", "50.0"],
+    ]);
     expect(
-      (await readCsvAll(out, "stops.txt")).map((s) => s.stop_name),
-    ).toEqual(["Legislature Exch, Bay D", "Duncan"]);
-    expect(
-      (await readCsvAll(out, "calendar_dates.txt")).map((r) => r.service_id),
-    ).toEqual(["5454", "6000"]);
-    expect((await readCsvAll(out, "trips.txt")).length).toBe(2);
+      (await readCsvAll(out, "stop_times.txt")).map((r) => r.trip_id),
+    ).toEqual(["t1", "t1", "t2", "t2"]);
+    // A service both list the same way is written once; the agency too.
+    expect(await readCsvAll(out, "calendar_dates.txt")).toHaveLength(2);
+    expect(await readCsvAll(out, "agency.txt")).toHaveLength(1);
     expect(await readCsvAll(out, "feed_info.txt")).toEqual([
       {
         feed_publisher_name: "Consat",
-        feed_version: "202610280/a",
-        feed_start_date: "20261026",
-        feed_end_date: "20261231",
+        feed_version: "202611020/a",
+        feed_start_date: "20261029",
+        feed_end_date: "20270331",
       },
     ]);
   });
 
-  it("makes the same zip from the same parts", async () => {
+  it("gives the same timetable for the same exports", async () => {
+    const parts = [
+      await zip("comox.zip", comox),
+      await zip("campbell.zip", campbell),
+    ];
     const a = join(dir, "a.zip");
     const b = join(dir, "b.zip");
     await mergeGtfs(parts, a);
     await mergeGtfs(parts, b);
     expect(await zipSignature(a)).toBe(await zipSignature(b));
+  });
+
+  it("renames a time zone the feed takes as its own", async () => {
+    const tz = (zone: string) =>
+      `agency_id,agency_name,agency_timezone\n0,BCTransit,${zone}\n`;
+    const out = join(dir, "zones.zip");
+    await mergeGtfs(
+      [
+        await zip("comox-tz.zip", {
+          ...comox,
+          "agency.txt": tz("America/Vancouver"),
+        }),
+        await zip("dawson.zip", {
+          ...campbell,
+          "agency.txt": tz("America/Dawson_Creek"),
+        }),
+      ],
+      out,
+      { timezones: { "America/Dawson_Creek": "America/Vancouver" } },
+    );
+    expect(await readCsvAll(out, "agency.txt")).toEqual([
+      {
+        agency_id: "0",
+        agency_name: "BCTransit",
+        agency_timezone: "America/Vancouver",
+      },
+    ]);
+  });
+
+  it("fails when two exports list a service differently", async () => {
+    const other = {
+      ...campbell,
+      "calendar_dates.txt": "service_id,date,exception_type\n5484,20261104,1\n",
+    };
+    await expect(
+      mergeGtfs(
+        [await zip("comox.zip", comox), await zip("other.zip", other)],
+        join(dir, "bad.zip"),
+      ),
+    ).rejects.toThrow(/calendar_dates.txt: 5484 differs/);
   });
 });

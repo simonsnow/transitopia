@@ -16,13 +16,13 @@ export interface PlanRoute {
    * plan names its feed once, and `decodeCore` sets it.
    */
   feed: string;
-  /** Unique within the feed; what config, URLs and the map name it by (plan/routes.ts → `selectRoutes`). */
+  /** How the plan and everything built from it name the route, unique in its feed (plan/routes.ts). */
   key: string;
   /**
-   * What riders call it ("1"): the key, without the agency a feed of several qualifies it with
-   * ("1@comox-valley"). Absent in plans built before it: `routeName` falls back to the key.
+   * What riders call it ("1"), where that isn't its key: in a feed keyed by route_id (feed.json →
+   * routeKey), whose systems each have a 1. `routeShortName` gives it either way.
    */
-  name?: string | undefined;
+  shortName?: string | undefined;
   label: string;
   /** false: a line only, no vehicles (routes.json → vehicles; on-demand service). */
   vehicles?: false | undefined;
@@ -62,6 +62,13 @@ export interface PlanRoute {
   weekdaySpeed?: [number, number] | undefined;
 }
 
+/** What riders call a route: the "99" on a badge or a bus's sign. */
+export function routeShortName(
+  r: Pick<PlanRoute, "key" | "shortName">,
+): string {
+  return r.shortName ?? r.key;
+}
+
 /** Every GTFS route a route is drawn for: its own and any merged into it. */
 export function gtfsRouteIds(
   r: Pick<PlanRoute, "gtfsRouteId" | "mergedGtfsRouteIds">,
@@ -78,7 +85,7 @@ export interface PlanStop {
   code?: string;
   /** Parent station stop_id, for platforms. */
   parent?: string;
-  /** Platform code/number parsed from the name, e.g. "2" for "… @ Platform 2". */
+  /** GTFS platform_code, else the platform parsed from the name: "2" for "… @ Platform 2". */
   platform?: string;
 }
 
@@ -369,7 +376,7 @@ export interface PlanFiles {
   /** Bus patterns' paths over the corridors (`PatternPath`), a file per route group (`pathGroup`). */
   paths?: Record<string, string> | undefined;
   /**
-   * SkyTrain patterns' paths over its line pieces in the plan's tiles (`PathStep`s), where the region
+   * SkyTrain patterns' paths over its line pieces in the plan's tiles (`PathStep`s), where the feed
    * has track. Set by build-plan-tiles, with the tiles they're numbered by.
    */
   railPaths?: string | undefined;
@@ -417,11 +424,48 @@ export interface FeedManifestEntry {
   movements?: string;
 }
 
+/** [west, south, east, north], degrees. */
+export type Bounds = [number, number, number, number];
+
 /** One feed's built versions: data/feeds/<feed>/manifest.json (docs/DESIGN.md#feeds-operators-and-rail-networks). */
 export interface FeedManifest {
   schema: 1;
   generatedAt: string;
+  /**
+   * Where the feed runs: the bbox of every version's stops and shapes (`planCoverage`), null with
+   * nothing built. The engine loads the feed while the view (plus a margin) overlaps it
+   * (packages/transit-map/README.md#feeds).
+   */
+  coverage: Bounds | null;
   feeds: FeedManifestEntry[];
+}
+
+/** The bbox of a plan's stops and shapes, or null for a plan with neither. */
+export function planCoverage(
+  plan: Pick<ServicePlan, "stops" | "shapes">,
+): Bounds | null {
+  let [w, s, e, n] = [Infinity, Infinity, -Infinity, -Infinity];
+  const add = (lon: number, lat: number) => {
+    if (lon < w) w = lon;
+    if (lon > e) e = lon;
+    if (lat < s) s = lat;
+    if (lat > n) n = lat;
+  };
+  for (const stop of plan.stops) add(stop.lon, stop.lat);
+  for (const shape of Object.values(plan.shapes))
+    for (const [lon, lat] of shape) add(lon, lat);
+  return Number.isFinite(w) ? [w, s, e, n] : null;
+}
+
+/** The smallest bounds holding both (either may be null). */
+export function unionBounds(a: Bounds | null, b: Bounds | null): Bounds | null {
+  if (!a || !b) return a ?? b;
+  return [
+    Math.min(a[0], b[0]),
+    Math.min(a[1], b[1]),
+    Math.max(a[2], b[2]),
+    Math.max(a[3], b[3]),
+  ];
 }
 
 /**
@@ -491,7 +535,3 @@ export function manifestRange(
     ),
   };
 }
-
-/** What riders call a route ("1"), even in a feed of several agencies (`PlanRoute.name`). */
-export const routeName = (r: Pick<PlanRoute, "key" | "name">): string =>
-  r.name ?? r.key;

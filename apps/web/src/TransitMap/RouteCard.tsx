@@ -8,8 +8,8 @@ import {
   type TransitEngine,
   type TransitSnapshot,
 } from "@transitopia/transit-map/engine.ts";
-import { routeName } from "@transitopia/transit-core/plan/types.ts";
 import { localDate, toWallTime } from "@transitopia/transit-core/time.ts";
+import { routeShortName } from "@transitopia/transit-core/plan/types.ts";
 import { DAY_WINDOW } from "@transitopia/transit-core/schedule/frequency.ts";
 import { creditsFor, legendsFor } from "@transitopia/shared/datasets.ts";
 
@@ -86,7 +86,7 @@ const RouteCardBody: React.FC<{
     <InfoCard
       tile={
         route.mode === "bus" ?
-          { text: routeName(route), ...colors }
+          { text: routeShortName(route), ...colors }
         : {
             icon: route.mode === "ferry" ? "ferry" : "train",
             ...colors,
@@ -152,7 +152,7 @@ const Stops: React.FC<{ snap: TransitSnapshot; place: RouteSnapshot }> = ({
             note={
               stops.headsign ?
                 toHeadsign(stops.headsign).replace(
-                  new RegExp(`^${routeName(route)}\\s+`),
+                  new RegExp(`^${routeShortName(route)}\\s+`),
                   "",
                 )
               : undefined
@@ -208,7 +208,7 @@ const SharedCardBody: React.FC<{
       }
       // Its routes, as a stop card's chips: each opens its route's card.
       chips={place.routes.map((r) => ({
-        label: r.mode === "bus" ? routeName(r) : r.label,
+        label: r.mode === "bus" ? routeShortName(r) : r.label,
         color: colors(r),
         onSelect: () =>
           engine.open(

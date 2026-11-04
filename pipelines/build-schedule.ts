@@ -32,9 +32,12 @@ import {
   readOperator,
   writeJson,
 } from "@transitopia/data/paths.ts";
-import { readPlanCore, writePlan } from "@transitopia/data/plans.ts";
+import { readPlan, readPlanCore, writePlan } from "@transitopia/data/plans.ts";
 import { shortId } from "@transitopia/transit-core/plan/display.ts";
-import type { FeedInfo } from "@transitopia/transit-core/config.ts";
+import {
+  stripComments,
+  type FeedInfo,
+} from "@transitopia/transit-core/config.ts";
 import { selectRoutes } from "@transitopia/transit-core/plan/routes.ts";
 import {
   cumulativeLengths,
@@ -46,9 +49,12 @@ import {
   type StopSpurLimits,
 } from "@transitopia/transit-core/geo.ts";
 import {
+  addDays,
+  firstOffsetDifference,
   parseGtfsTime,
-  TIMEZONE,
   serviceDate,
+  serviceDayStart,
+  TIMEZONE,
 } from "@transitopia/transit-core/time.ts";
 import {
   matchShape,
@@ -71,6 +77,8 @@ import type {
 import {
   feedDataPath,
   type FeedManifest,
+  planCoverage,
+  unionBounds,
   type PlanCorridor,
   type PlanPattern,
   type PlanRoute,
@@ -115,11 +123,12 @@ const STOP_OFFSET_WARN_M = 150;
  * place of corridor-refs.json. 18: shared stretches compare a bus exchange's bays as one place (two
  * routes into different bays of it share the stretch to it), in the frequency table. 19: routes
  * say whether they're drawn in their own colour (`brand`, in place of `category`), and carry their
- * stops and weekday speeds. 20: routes have a `name`, and a feed of several agencies (static.parts)
- * qualifies their keys by agency; an agency's one colour on every route counts as none. 21:
- * routes can be lines only (`vehicles: false`).
+ * stops and weekday speeds. 20: weekday figures for the regular week in the feed's first 5 weeks
+ * (schedule/frequency.ts → regularWeek), not its longest timetable period. 21: routes can be lines
+ * only (`vehicles: false`). 22: feed-specific route keys can use GTFS route_id, with the rider-facing
+ * short name stored separately.
  */
-const PLAN_FORMAT = 21;
+const PLAN_FORMAT = 22;
 
 const roadsFile = (feed: string) => join(feedPaths(feed).roads, "latest.json");
 
@@ -166,7 +175,12 @@ async function inputsHash(feed: string): Promise<string> {
     join(OPERATORS_DIR, info.operator, "operator.json"),
   ];
   files.push(...(await readFerries(feed)).map((f) => f.path));
-  for (const f of files) h.update(await readFile(f));
+  // Without their "$" comments: editing a comment (a cited source, a moved file's path) mustn't
+  // rebuild every plan.
+  for (const f of files)
+    h.update(
+      `${JSON.stringify(stripComments(JSON.parse(await readFile(f, "utf8"))))}\n`,
+    );
   h.update(`roads ${(await roadsStamp(feed)) ?? "none"}\n`);
   return h.digest("hex").slice(0, 16);
 }
@@ -190,25 +204,44 @@ export async function buildPlan(
 
   const [info] = await readCsvAll(zipPath, "feed_info.txt");
   if (!info) throw new Error("feed_info.txt missing");
-  // Service days use the feed's time zone. The engine currently supports TIMEZONE only
-  // (packages/transit-core/src/time.ts); statedTimezone records a GTFS agency zone known to differ.
-  const stated = feed.static.statedTimezone ?? feed.timezone;
-  if (feed.timezone !== TIMEZONE)
-    throw new Error(
-      `${feed.id}: feed time zone ${feed.timezone}; only ${TIMEZONE} is supported`,
-    );
+  // Service days and times are computed in TIMEZONE (packages/transit-core/src/time.ts), so every
+  // feed has to be in it until the engine works out service dates per feed (docs/DESIGN.md#feeds-operators-and-rail-networks).
+  // equivalentTimezones and statedTimezone validate GTFS metadata; service times still use feed.timezone.
+  const zones = new Set([
+    feed.timezone,
+    ...(feed.equivalentTimezones ?? []),
+    ...("url" in feed.static && feed.static.statedTimezone ?
+      [feed.static.statedTimezone]
+    : []),
+  ]);
   for (const a of await readCsvAll(zipPath, "agency.txt"))
-    if (a.agency_timezone !== stated)
+    if (!zones.has(a.agency_timezone!) || feed.timezone !== TIMEZONE)
       throw new Error(
-        `${feed.id}: agency ${a.agency_name} is in ${a.agency_timezone} and the feed says ${stated}; only ${TIMEZONE} is supported`,
+        `${feed.id}: agency ${a.agency_name} is in ${a.agency_timezone}, not one of its configured time zones (${[...zones].join(", ")}); only ${TIMEZONE} is supported`,
       );
+  for (const z of feed.equivalentTimezones ?? []) {
+    const at = firstOffsetDifference(
+      z,
+      feed.timezone,
+      serviceDayStart(serviceDate(info.feed_start_date!), feed.timezone),
+      serviceDayStart(
+        addDays(serviceDate(info.feed_end_date!), 2),
+        feed.timezone,
+      ),
+    );
+    if (at !== undefined)
+      throw new Error(
+        `${feed.id}: ${z} and ${feed.timezone} have different UTC offsets at ${new Date(at).toISOString()}, so ${z} can no longer be taken as ${feed.timezone} (feed.json → equivalentTimezones)`,
+      );
+  }
 
-  // Routes: every one in the feed, as routes.json overrides or excludes them (matched by name).
+  // Routes: every one in the feed, as routes.json overrides or excludes them (matched by name), keyed as feed.json says.
   const selected = selectRoutes(
     await readCsvAll(zipPath, "routes.txt"),
     routeCfg,
     feed.id,
     gtfsDataset,
+    feed.routeKey,
   );
   for (const { row, reason } of selected.skipped)
     log(
@@ -230,16 +263,20 @@ export async function buildPlan(
     block: string;
     shape: string;
   }
+  const headsignsByRoute = new Map(
+    routeCfg.routes.flatMap((c) => (c.headsigns ? [[c.key, c.headsigns]] : [])),
+  );
   const rawTrips = new Map<string, RawTrip>();
   for await (const row of readCsv(zipPath, "trips.txt")) {
     const route = routeByGtfsId.get(row.route_id!);
     if (!route) continue;
+    const headsign = row.trip_headsign ?? "";
     rawTrips.set(row.trip_id!, {
       id: row.trip_id!,
       route,
       service: row.service_id!,
       direction: Number(row.direction_id || 0),
-      headsign: row.trip_headsign ?? "",
+      headsign: headsignsByRoute.get(route.key)?.[headsign] ?? headsign,
       block: row.block_id ?? "",
       shape: row.shape_id ?? "",
     });
@@ -290,7 +327,8 @@ export async function buildPlan(
     };
     if (row.stop_code) s.code = row.stop_code;
     if (row.parent_station) s.parent = row.parent_station;
-    const platform = /@\s*Platform\s+(\w+)/i.exec(s.name)?.[1];
+    const platform =
+      row.platform_code || /@\s*Platform\s+(\w+)/i.exec(s.name)?.[1];
     if (platform) s.platform = platform;
     stopIndex.set(id, stops.length);
     stops.push(s);
@@ -613,15 +651,20 @@ export function interpolateMissing(times: number[], dist: number[]): number[] {
   return out;
 }
 
-/** A feed's manifest: every version built, from its plans. */
+/** A feed's manifest: every version built, and where they run, from its plans. */
 export async function buildManifest(feed: string): Promise<FeedManifest> {
   const out = feedPaths(feed).out;
   const feeds: FeedManifest["feeds"] = [];
+  let coverage: FeedManifest["coverage"] = null;
   const dirs = (await exists(out)) ? await readdir(out) : [];
   for (const v of dirs.sort()) {
     const p = join(out, v, "plan.json");
     if (!(await exists(p))) continue;
     const plan = await readPlanCore(p);
+    coverage = unionBounds(
+      coverage,
+      planCoverage(await readPlan(p, { trips: false })),
+    );
     feeds.push({
       version: plan.feedVersion,
       start: plan.feedStart,
@@ -633,6 +676,7 @@ export async function buildManifest(feed: string): Promise<FeedManifest> {
   const manifest: FeedManifest = {
     schema: 1,
     generatedAt: new Date().toISOString(),
+    coverage,
     feeds,
   };
   await writeJson(feedPaths(feed).manifest, manifest, true);

@@ -127,18 +127,21 @@ describe("selectRoutes", () => {
     ).toThrow(/Two routes have the key 5/);
   });
 
-  it("qualifies keys by agency in a feed of several, matching overrides by agency", () => {
+  it("keys merged feeds by route_id and can scope overrides to an agency", () => {
     const rows = [
       { ...row("1-VIC", "1", "Richardson"), agency_id: "victoria" },
       { ...row("95-VIC", "95", "Blink"), agency_id: "victoria" },
-      { ...row("1-NAN", "1", "Rapid Line"), agency_id: "nanaimo" },
+      {
+        ...row("1-NAN", "1", "Nanaimo Rapid Line"),
+        agency_id: "nanaimo",
+      },
     ];
     const { routes } = selectRoutes(
       rows,
       cfg({
         routes: [
           {
-            key: "1",
+            key: "1-NAN",
             label: "1 Nanaimo Rapid Line",
             match: { agency: "nanaimo", route_short_name: "1" },
             brand: true,
@@ -147,15 +150,16 @@ describe("selectRoutes", () => {
       }),
       "bc-transit",
       undefined,
+      "route_id",
     );
-    expect(routes.map((r) => [r.key, r.name, r.label, r.brand])).toEqual([
-      ["1@nanaimo", "1", "1 Nanaimo Rapid Line", true],
-      ["1@victoria", "1", "1 Richardson", false],
-      ["95@victoria", "95", "95 Blink", false],
+    expect(routes.map((r) => [r.key, r.shortName, r.label, r.brand])).toEqual([
+      ["1-NAN", "1", "1 Nanaimo Rapid Line", true],
+      ["1-VIC", "1", "1 Richardson", false],
+      ["95-VIC", "95", "95 Blink", false],
     ]);
   });
 
-  it("treats one colour on every route of an agency as none", () => {
+  it("treats one shared colour across an agency as a placeholder", () => {
     const { routes } = selectRoutes(
       [
         { ...row("1-SC", "1", "Gibsons", "3", "000000"), agency_id: "sc" },
@@ -166,12 +170,13 @@ describe("selectRoutes", () => {
       cfg({ routes: [] }),
       "bc-transit",
       undefined,
+      "route_id",
     );
     expect(Object.fromEntries(routes.map((r) => [r.key, r.color]))).toEqual({
-      "1@sc": "#666666",
-      "2@sc": "#666666",
-      "1@cr": "#004b8d",
-      "15@cr": "#000000",
+      "1-SC": "#666666",
+      "2-SC": "#666666",
+      "1-CR": "#004b8d",
+      "15-CR": "#000000",
     });
   });
 
@@ -206,14 +211,14 @@ describe("selectRoutes", () => {
     expect(routes[0]).toMatchObject({ key: "harrop", vehicles: false });
   });
 
-  it("allows one key per agency in routes.json", () => {
+  it("requires unique override keys within a feed", () => {
     const entry = (agency?: string) => ({
       key: "1",
       match: { route_short_name: "1", ...(agency ? { agency } : {}) },
     });
     expect(() =>
       cfg({ routes: [entry("nanaimo"), entry("west-coast")] }),
-    ).not.toThrow();
+    ).toThrow(/route keys must be unique/);
     expect(() => cfg({ routes: [entry(), entry()] })).toThrow(/unique/);
   });
 
@@ -224,7 +229,39 @@ describe("selectRoutes", () => {
       "translink",
       undefined,
     );
-    expect(routes.map((r) => [r.key, r.name])).toEqual([["5", "5"]]);
+    expect(routes.map((r) => [r.key, r.shortName])).toEqual([["5", undefined]]);
+  });
+});
+
+describe("keyed by route_id", () => {
+  it("keys a feed's routes by route_id, named by their short name", () => {
+    const { routes } = selectRoutes(
+      [
+        row("1-COM", "1", "Comox Mall / Anfield Centre"),
+        row("1-CAM", "1", "Campbellton / Willow Point"),
+        row("2-COM", "002", "Cumberland"),
+      ],
+      cfg({ routes: [] }),
+      "bc-transit-north-island",
+      undefined,
+      "route_id",
+    );
+    expect(routes.map((r) => [r.key, r.shortName, r.label])).toEqual([
+      ["1-CAM", "1", "1 Campbellton / Willow Point"],
+      ["1-COM", "1", "1 Comox Mall / Anfield Centre"],
+      ["2-COM", "2", "2 Cumberland"],
+    ]);
+  });
+
+  it("names routes keyed by name by their key alone", () => {
+    const { routes } = selectRoutes(
+      [row("6627", "025", "King Edward")],
+      cfg({ routes: [] }),
+      "translink",
+      undefined,
+    );
+    expect(routes[0]!.key).toBe("25");
+    expect("shortName" in routes[0]!).toBe(false);
   });
 });
 

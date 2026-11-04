@@ -1,165 +1,207 @@
-// Merge several GTFS feeds into one, for a feed made of parts (feed.json → static.parts): each part
-// becomes an agency of its own (agency_id = the part's `agency`, every route assigned to it), and
-// the other files are concatenated. Where two parts have a row with the same key (GTFS's primary
-// key for the file, e.g. a stop both systems serve, or a service both define), the earlier part's
-// is kept: the providers this is for (BC Transit's Consat exports) use ids that are global across
-// their systems, so a shared id is the same thing. feed_info.txt says the newest part's version and
-// the dates every part covers: the merged timetable is complete only there, and the feed's regular
-// week (schedule/frequency.ts → `regularWeek`) is taken over those dates, which a part running on
-// alone for months would otherwise set. The output is deterministic (same inputs, same bytes per file), so
-// fetch-gtfs can tell an unchanged timetable by its zip signature.
+// Several GTFS exports merged into one feed (config/feeds/<feed>/feed.json → static.merge): BC
+// Transit publishes each transit system on its own, and its server returns an empty feed when asked
+// for several at once (packages/transit-core/DESIGN.md#timetables). Its ids come from one database, so
+// the exports' records never clash, except stops two neighbouring systems share, which each export
+// writes a little differently: the first export listing one wins. Anything else listed twice must
+// be the same in both, or the merge fails. Exports in a zone the feed takes as its own
+// (feed.json → equivalentTimezones) have it renamed first.
 
-import { writeFile } from "node:fs/promises";
-import { Zip, ZipDeflate } from "fflate";
-import { listEntries, readCsv, readCsvAll, type Row } from "./gtfs-zip.ts";
+import { createHash, type Hash } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { once } from "node:events";
+import { pipeline } from "node:stream/promises";
+import yazl from "yazl";
+import { csvColumns, listEntries, readCsv, type Row } from "./gtfs-zip.ts";
 
-export interface MergePart {
-  /** agency_id in the merged feed. */
-  agency: string;
-  /** agency_name in the merged feed. */
-  name: string;
-  /** The part's GTFS zip. */
-  path: string;
+/** How a file's records are told apart, and what happens when two exports list one differently. */
+interface Rule {
+  /** The record a row belongs to: all of a shape's points, a trip's stop times, a service's dates. */
+  key: (r: Row) => string;
+  /** "first": the first export's wins (counted in the report); "fail": the merge fails. */
+  differs: "first" | "fail";
 }
 
-/** GTFS's primary key per file (https://gtfs.org/documentation/schedule/reference/); other files: the whole row. */
-const KEYS: Record<string, readonly string[]> = {
-  "stops.txt": ["stop_id"],
-  "routes.txt": ["route_id"],
-  "trips.txt": ["trip_id"],
-  "stop_times.txt": ["trip_id", "stop_sequence"],
-  "calendar.txt": ["service_id"],
-  "calendar_dates.txt": ["service_id", "date"],
-  "shapes.txt": ["shape_id", "shape_pt_sequence"],
-  "frequencies.txt": ["trip_id", "start_time"],
-  "fare_attributes.txt": ["fare_id"],
-  "levels.txt": ["level_id"],
-  "pathways.txt": ["pathway_id"],
+const field =
+  (...names: string[]) =>
+  (r: Row) =>
+    names.map((n) => r[n] ?? "").join("\0");
+
+const RULES: Record<string, Rule> = {
+  "agency.txt": { key: field("agency_id"), differs: "fail" },
+  "stops.txt": { key: field("stop_id"), differs: "first" },
+  "routes.txt": { key: field("route_id"), differs: "fail" },
+  "trips.txt": { key: field("trip_id"), differs: "fail" },
+  "stop_times.txt": { key: field("trip_id"), differs: "fail" },
+  "calendar.txt": { key: field("service_id"), differs: "fail" },
+  "calendar_dates.txt": { key: field("service_id"), differs: "fail" },
+  "shapes.txt": { key: field("shape_id"), differs: "fail" },
 };
+/** Any other file: identical rows are written once. */
+const WHOLE_ROW: Rule = { key: (r) => JSON.stringify(r), differs: "first" };
 
-/** Written from the parts' rows rather than concatenated. */
-const REWRITTEN = new Set(["agency.txt", "feed_info.txt"]);
-
-function csvField(v: string): string {
-  return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+export interface MergeOptions {
+  /** Time zones renamed wherever a file names one (agency_timezone, stop_timezone): from → to. */
+  timezones?: Readonly<Record<string, string>> | undefined;
 }
 
-function csvLine(columns: readonly string[], row: Row): string {
-  return columns.map((c) => csvField(row[c] ?? "")).join(",") + "\n";
+/** Column values a merge rewrites before comparing exports. */
+const TIMEZONE_COLUMNS = ["agency_timezone", "stop_timezone"];
+
+/** A row as `options` rewrite it. */
+function rewriter(options: MergeOptions): (r: Row) => Row {
+  const zones = options.timezones ?? {};
+  if (!Object.keys(zones).length) return (r) => r;
+  return (r) => {
+    let out = r;
+    for (const c of TIMEZONE_COLUMNS) {
+      const to = r[c] !== undefined ? zones[r[c]] : undefined;
+      if (to !== undefined) out = { ...out, [c]: to };
+    }
+    return out;
+  };
 }
 
-/** Merge the parts' GTFS zips into one at `out`. */
-export async function mergeGtfs(
-  parts: readonly MergePart[],
+export interface MergeReport {
+  /** Per file, records listed differently by two exports, where the first export's was kept. */
+  keptFirst: Record<string, number>;
+}
+
+/** CSV field, quoted when it needs to be. */
+const csvField = (v: string) =>
+  /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+
+/** Each record's digest in one export (its rows in order), to compare with another export's. */
+async function digests(
+  zip: string,
+  name: string,
+  rule: Rule,
+  fix: (r: Row) => Row,
+): Promise<Map<string, string>> {
+  const hashes = new Map<string, Hash>();
+  for await (const raw of readCsv(zip, name)) {
+    const r = fix(raw);
+    const k = rule.key(r);
+    let h = hashes.get(k);
+    if (!h) hashes.set(k, (h = createHash("sha1")));
+    h.update(JSON.stringify(r));
+  }
+  return new Map([...hashes].map(([k, h]) => [k, h.digest("base64")]));
+}
+
+/** One file of the merged feed, written to `out`. */
+async function mergeFile(
+  parts: readonly string[],
+  name: string,
+  out: string,
+  report: MergeReport,
+  fix: (r: Row) => Row,
+): Promise<void> {
+  const rule = RULES[name] ?? WHOLE_ROW;
+  const columns: string[] = [];
+  for (const p of parts)
+    for (const c of await csvColumns(p, name))
+      if (!columns.includes(c)) columns.push(c);
+  const file = createWriteStream(out);
+  const write = async (line: string) => {
+    if (!file.write(`${line}\n`)) await once(file, "drain");
+  };
+  await write(columns.map(csvField).join(","));
+  /** Which export each record is taken from, and its digest there. */
+  const owner = new Map<string, { part: number; digest: string }>();
+  for (const [i, p] of parts.entries()) {
+    const mine = await digests(p, name, rule, fix);
+    const taken = new Set<string>();
+    for (const [k, digest] of mine) {
+      const o = owner.get(k);
+      if (!o) {
+        owner.set(k, { part: i, digest });
+        taken.add(k);
+      } else if (o.digest !== digest) {
+        if (rule.differs === "fail")
+          throw new Error(
+            `${name}: ${k.replace(/\0/g, " ")} differs between the exports merged`,
+          );
+        report.keptFirst[name] = (report.keptFirst[name] ?? 0) + 1;
+      }
+    }
+    if (!taken.size) continue;
+    for await (const raw of readCsv(p, name)) {
+      const r = fix(raw);
+      if (taken.has(rule.key(r)))
+        await write(columns.map((c) => csvField(r[c] ?? "")).join(","));
+    }
+  }
+  file.end();
+  await once(file, "finish");
+}
+
+/**
+ * feed_info.txt: the first export's, with the newest version, the earliest start and the earliest
+ * end. Past the end of one export's dates its system's services are missing, and over months of
+ * them the most common set of services on a weekday (schedule/frequency.ts → regularWeek,
+ * gtfs/describe.ts) would be one without them; an export starting a day or two after the others
+ * leaves only those days without it.
+ */
+async function mergeFeedInfo(
+  parts: readonly string[],
   out: string,
 ): Promise<void> {
-  const files = new Set<string>();
-  for (const p of parts)
-    for (const name of await listEntries(p.path))
-      if (name.endsWith(".txt") && !REWRITTEN.has(name)) files.add(name);
-
-  const chunks: Uint8Array[] = [];
-  const done = new Promise<void>((resolve, reject) => {
-    const zip = new Zip((err, chunk, final) => {
-      if (err) return reject(err);
-      chunks.push(chunk);
-      if (final) resolve();
-    });
-    const add = (name: string, text: string) => {
-      const f = new ZipDeflate(name, { level: 6 });
-      // A fixed time, so the same content makes the same zip.
-      f.mtime = new Date("2000-01-01T00:00:00Z");
-      zip.add(f);
-      f.push(new TextEncoder().encode(text), true);
-    };
-    (async () => {
-      add("agency.txt", await agencyFile(parts));
-      add("feed_info.txt", await feedInfoFile(parts));
-      for (const name of [...files].sort())
-        add(name, await mergedFile(parts, name));
-      zip.end();
-    })().catch(reject);
-  });
-  await done;
-  await writeFile(out, Buffer.concat(chunks));
-}
-
-/** One file's rows from every part, the first of each key kept, with every part's columns. */
-async function mergedFile(
-  parts: readonly MergePart[],
-  name: string,
-): Promise<string> {
-  const keyCols = KEYS[name];
-  const routes = name === "routes.txt";
-  // The columns first (each part's header), so rows are written as they're read.
-  const columns: string[] = routes ? ["agency_id"] : [];
-  for (const p of parts)
-    for await (const row of readCsv(p.path, name)) {
-      for (const c of Object.keys(row))
-        if (!columns.includes(c)) columns.push(c);
-      break;
-    }
-  const seen = new Set<string>();
-  const out: string[] = [columns.map(csvField).join(",") + "\n"];
-  for (const p of parts)
-    for await (const row of readCsv(p.path, name)) {
-      const key =
-        keyCols ?
-          keyCols.map((c) => row[c] ?? "").join("\u0000")
-        : columns.map((c) => row[c] ?? "").join("\u0000");
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(
-        csvLine(columns, routes ? { ...row, agency_id: p.agency } : row),
-      );
-    }
-  return out.join("");
-}
-
-/** An agency per part, with its first agency's other fields (url, timezone, language). */
-async function agencyFile(parts: readonly MergePart[]): Promise<string> {
-  const rows: Row[] = [];
-  for (const p of parts) {
-    const [first] = await readCsvAll(p.path, "agency.txt");
-    if (!first) throw new Error(`${p.agency}: its GTFS has no agency.txt`);
-    rows.push({ ...first, agency_id: p.agency, agency_name: p.name });
-  }
-  const columns = [
-    "agency_id",
-    "agency_name",
-    ...Object.keys(rows[0]!).filter(
-      (c) => c !== "agency_id" && c !== "agency_name",
-    ),
-  ];
-  return (
-    columns.map(csvField).join(",")
-    + "\n"
-    + rows.map((r) => csvLine(columns, r)).join("")
-  );
-}
-
-/** The newest part's feed_info, for the dates every part covers. */
-async function feedInfoFile(parts: readonly MergePart[]): Promise<string> {
   const infos: Row[] = [];
-  for (const p of parts) {
-    const [info] = await readCsvAll(p.path, "feed_info.txt");
-    if (!info?.feed_version || !info.feed_start_date || !info.feed_end_date)
-      throw new Error(
-        `${p.agency}: its GTFS has no feed_info.txt feed_version and dates`,
-      );
-    infos.push(info);
-  }
-  const newest = infos.reduce((a, b) =>
-    b.feed_version! > a.feed_version! ? b : a,
-  );
-  const merged: Row = {
-    ...newest,
-    feed_start_date: infos
-      .map((i) => i.feed_start_date!)
-      .sort()
-      .at(-1)!,
-    feed_end_date: infos.map((i) => i.feed_end_date!).sort()[0]!,
+  for (const p of parts)
+    for await (const r of readCsv(p, "feed_info.txt")) infos.push(r);
+  if (!infos.length) throw new Error("no feed_info.txt in the exports merged");
+  const pick = (f: string, best: (a: string, b: string) => boolean) =>
+    infos
+      .map((r) => r[f] ?? "")
+      .filter(Boolean)
+      .reduce<string | undefined>(
+        (a, b) => (a === undefined || best(b, a) ? b : a),
+        undefined,
+      ) ?? "";
+  const row: Row = {
+    ...infos[0]!,
+    feed_version: pick("feed_version", (a, b) => a > b),
+    feed_start_date: pick("feed_start_date", (a, b) => a < b),
+    feed_end_date: pick("feed_end_date", (a, b) => a < b),
   };
-  const columns = Object.keys(merged);
-  return columns.map(csvField).join(",") + "\n" + csvLine(columns, merged);
+  const columns = Object.keys(row);
+  const file = createWriteStream(out);
+  file.end(
+    `${columns.map(csvField).join(",")}\n${columns.map((c) => csvField(row[c] ?? "")).join(",")}\n`,
+  );
+  await once(file, "finish");
+}
+
+/** A fixed time for every entry, so merging the same exports gives the same zip. */
+const ENTRY_TIME = new Date("2000-01-01T00:00:00Z");
+
+/** The GTFS zips `parts`, in order, merged into one at `dest`. */
+export async function mergeGtfs(
+  parts: readonly string[],
+  dest: string,
+  options: MergeOptions = {},
+): Promise<MergeReport> {
+  const fix = rewriter(options);
+  const names: string[] = [];
+  for (const p of parts)
+    for (const n of await listEntries(p)) if (!names.includes(n)) names.push(n);
+  const dir = await mkdtemp(join(tmpdir(), "gtfs-merge-"));
+  const report: MergeReport = { keptFirst: {} };
+  try {
+    const zip = new yazl.ZipFile();
+    for (const name of names) {
+      const out = join(dir, name);
+      if (name === "feed_info.txt") await mergeFeedInfo(parts, out);
+      else await mergeFile(parts, name, out, report, fix);
+      zip.addFile(out, name, { mtime: ENTRY_TIME });
+    }
+    zip.end();
+    await pipeline(zip.outputStream, createWriteStream(dest));
+    return report;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }

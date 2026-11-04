@@ -2,7 +2,7 @@
   "$comment": "BC Transit's Kamloops Regional Transit System (operator 46).",
   "id": "kamloops",
   "name": "Kamloops",
-  "feeds": ["bc-transit-kamloops"],
+  "feeds": ["bc-transit-thompson-cariboo"],
   "bbox": [-120.55, 50.55, -119.95, 50.95],
   "initialBounds": [-120.43, 50.62, -120.12, 50.82]
 }

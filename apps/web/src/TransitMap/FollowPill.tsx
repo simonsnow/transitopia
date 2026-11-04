@@ -5,7 +5,7 @@ import type {
 } from "@transitopia/transit-map/engine.ts";
 import type { VehicleState } from "@transitopia/transit-core/schedule/engine.ts";
 import {
-  routeName,
+  routeShortName,
   type PlanRoute,
 } from "@transitopia/transit-core/plan/types.ts";
 
@@ -22,7 +22,7 @@ export function vehicleName(snap: TransitSnapshot): string {
 export function vehicleLabel(v: VehicleState, r: PlanRoute): string {
   const to = v.headsign.replace(/^.*?\bTo\s+/i, "to ");
   return (
-    r.mode === "bus" ? `${routeName(r)} bus ${to}`
+    r.mode === "bus" ? `${routeShortName(r)} bus ${to}`
     : r.mode === "ferry" ? `${r.label} ${to}`
     : `${r.label} train ${to}`
   );

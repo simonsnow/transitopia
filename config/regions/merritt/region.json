@@ -2,7 +2,7 @@
   "$comment": "BC Transit's Merritt Regional Transit System (operator 37).",
   "id": "merritt",
   "name": "Merritt",
-  "feeds": ["bc-transit-merritt"],
+  "feeds": ["bc-transit-thompson-cariboo"],
   "bbox": [-121.0, 50.0, -120.6, 50.25],
   "initialBounds": [-120.91, 50.09, -120.73, 50.2]
 }

@@ -17,9 +17,9 @@ import {
 import { DATASETS, realtimeOf } from "@transitopia/shared/datasets.ts";
 
 const CONFIG = join(import.meta.dirname, "../../../config");
-const REGIONS = join(CONFIG, "regions");
 const NETWORKS = join(CONFIG, "networks");
 const FEEDS = join(CONFIG, "feeds");
+const REGIONS = join(CONFIG, "regions");
 const OPERATORS = join(CONFIG, "operators");
 const DEFAULTS = join(CONFIG, "defaults");
 const SERVER = join(CONFIG, "server");
@@ -184,11 +184,7 @@ describe("config files", () => {
 const translink = () =>
   readJson(join(FEEDS, "translink/feed.json")) as Record<string, unknown>;
 
-describe("regions, feeds and rail networks", () => {
-  const regions = dirs(REGIONS).map((id) => ({
-    id,
-    region: parseRegion(readJson(join(REGIONS, id, "region.json"))),
-  }));
+describe("feeds and rail networks", () => {
   const networks = dirs(NETWORKS).map((id) => ({
     id,
     network: parseNetwork(readJson(join(NETWORKS, id, "network.json"))),
@@ -199,7 +195,6 @@ describe("regions, feeds and rail networks", () => {
   }));
 
   it("finds them", () => {
-    expect(regions.map((r) => r.id)).toContain("metro-vancouver");
     expect(feeds.map((f) => f.id)).toContain("translink");
     expect(networks.map((n) => n.id)).toContain("skytrain");
   });
@@ -227,41 +222,28 @@ describe("regions, feeds and rail networks", () => {
       }
     });
 
-  for (const { id, region } of regions)
-    it(`regions/${id}: its id is its directory, and its feeds exist and resolve`, () => {
-      expect(region.id).toBe(id);
-      for (const f of region.feeds) {
-        const feed = feeds.find((x) => x.id === f)?.feed;
-        expect(feed, f).toBeDefined();
-        // Every layer together: the defaults, the operator, the feed and the routes.
-        const op = operator(feed!.operator);
-        const routes = parseConfig(
-          "routes",
-          readJson(join(FEEDS, f, "routes.json")),
-        ).routes;
-        expect(() =>
-          resolveKinematics(defaults("kinematics"), op, feed!, routes),
-        ).not.toThrow();
-        expect(() => resolveRt(defaults("rt"), op, feed!)).not.toThrow();
-      }
+  for (const { id, feed } of feeds)
+    it(`feeds/${id}: its settings resolve`, () => {
+      // Every layer together: the defaults, the operator, the feed and the routes.
+      const op = operator(feed.operator);
+      const routes = parseConfig(
+        "routes",
+        readJson(join(FEEDS, id, "routes.json")),
+      ).routes;
+      expect(() =>
+        resolveKinematics(defaults("kinematics"), op, feed, routes),
+      ).not.toThrow();
+      expect(() => resolveRt(defaults("rt"), op, feed)).not.toThrow();
     });
 
-  it("overlay feeds are timetable routes along shapes, with AIS at most", () => {
-    // A region's feeds after the first are drawn over it (docs/DESIGN.md#overlay-feeds), which has
-    // no bus real time, track-level rail, route groups of its own or cards for them.
-    for (const { id, region } of regions)
-      for (const f of region.feeds.slice(1)) {
-        const feed = feeds.find((x) => x.id === f)!.feed;
-        expect(feed.realtime, `${id}: ${f}`).toBeUndefined();
-        const routes = parseConfig(
-          "routes",
-          readJson(join(FEEDS, f, "routes.json")),
-        );
-        for (const r of routes.routes)
-          expect(["skytrain", "bus"], `${id}: ${f}: ${r.key}`).not.toContain(
-            r.kind,
-          );
-      }
+  it("legacy region endpoints reference configured feeds", () => {
+    const feedIds = new Set(feeds.map(({ id }) => id));
+    for (const id of dirs(REGIONS)) {
+      const region = parseRegion(readJson(join(REGIONS, id, "region.json")));
+      expect(region.id).toBe(id);
+      for (const feed of region.feeds)
+        expect(feedIds, `${id}: ${feed}`).toContain(feed);
+    }
   });
 
   it("feeds credit a registered dataset, with its real-time companion where they have real time", () => {
@@ -269,67 +251,6 @@ describe("regions, feeds and rail networks", () => {
       expect(DATASETS, id).toHaveProperty(feed.dataset);
       if (feed.realtime) expect(realtimeOf(feed.dataset), id).toBeDefined();
     }
-  });
-
-  it("regions don't overlap", () => {
-    const areas = (r: (typeof regions)[number]) =>
-      r.region.areas ?? [r.region.bbox];
-    const aliased = new Set(
-      regions.flatMap(({ region }) =>
-        (region.aliases ?? []).map((alias) => alias.id),
-      ),
-    );
-    const selectable = regions.filter(({ id }) => !aliased.has(id));
-    for (const a of selectable)
-      for (const b of selectable) {
-        if (a.id >= b.id) continue;
-        for (const [aw, as, ae, an] of areas(a))
-          for (const [bw, bs, be, bn] of areas(b))
-            expect(
-              aw < be && bw < ae && as < bn && bs < an,
-              `${a.id} and ${b.id}`,
-            ).toBe(false);
-      }
-  });
-
-  it("regions' areas are inside their bbox", () => {
-    for (const { id, region } of regions) {
-      const [w, s, e, n] = region.bbox;
-      for (const [aw, as, ae, an] of region.areas ?? [])
-        expect(aw >= w && as >= s && ae <= e && an <= n, id).toBe(true);
-    }
-  });
-
-  it("keeps Hullo visible in both regions that cover its crossing", () => {
-    for (const id of ["metro-vancouver", "vancouver-island"]) {
-      const region = regions.find((r) => r.id === id)?.region;
-      expect(region?.feeds, id).toContain("hullo");
-    }
-  });
-
-  it("keeps the Fraser Valley display areas disjoint from Metro Vancouver except at Mission", () => {
-    const metro = regions.find((r) => r.id === "metro-vancouver")!.region;
-    const fraser = regions.find((r) => r.id === "fraser-valley")!.region;
-    const fraserAreas = fraser.areas ?? [];
-    expect(metro.areas).toEqual([
-      [-123.45, 48.95, -122.45, 49.55],
-      [-122.45, 49.05, -122.15, 49.22],
-    ]);
-    expect(fraserAreas).toEqual([
-      [-122.45, 48.99, -121.38, 49.05],
-      [-122.45, 49.22, -121.38, 49.42],
-      [-122.15, 49.05, -121.38, 49.22],
-    ]);
-    expect(
-      fraserAreas.some(
-        ([w, s, e, n]) => w < -122.15 && -122.45 < e && s < 49.22 && 49.05 < n,
-      ),
-    ).toBe(false);
-  });
-
-  it("includes the South Okanagan's bus routes in the region-selection bbox", () => {
-    const region = regions.find((r) => r.id === "central-okanagan")!.region;
-    expect(region.bbox[1]).toBeLessThan(49.1);
   });
 
   it("fills in a key, and refuses URLs that don't agree with apiKey", () => {

@@ -1,26 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { regionInView } from "../src/TransitMap/regions.ts";
+import { VIEWS } from "../src/TransitMap/views.ts";
 
-describe("regionInView", () => {
-  it("uses the region containing the view center at cross-border locations", () => {
-    const region = regionInView({
-      west: -122.5,
-      south: 49.08,
-      east: -122.2,
-      north: 49.2,
-    });
-
-    expect(region?.info.id).toBe("metro-vancouver");
+describe("named transit views", () => {
+  it("opens on Metro Vancouver", () => {
+    expect(VIEWS[0]?.name).toBe("Metro Vancouver");
   });
 
-  it("includes the South Okanagan in Central Okanagan", () => {
-    const region = regionInView({
-      west: -119.7,
-      south: 49.2,
-      east: -119.4,
-      north: 49.5,
-    });
-
-    expect(region?.info.id).toBe("central-okanagan");
+  it("retains quick views for established BC Transit regions", () => {
+    const names = new Set(VIEWS.map((view) => view.name));
+    for (const name of [
+      "Central Okanagan",
+      "Fraser Valley",
+      "Greater Victoria",
+      "Kamloops",
+      "Nanaimo",
+      "Merritt",
+      "West Kootenay",
+    ])
+      expect(names.has(name)).toBe(true);
   });
 });

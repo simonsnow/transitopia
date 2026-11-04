@@ -1,16 +1,18 @@
 // Download the roads a feed's buses can use from OpenStreetMap via Overpass, for matching bus shapes
 // to streets in build-schedule (packages/transit-core/DESIGN.md#bus-corridors): every public road
 // class, busways, service roads open to buses, and service roads near bus stops (exchange loops are
-// often plain service roads). The area is the bbox of the regions showing the feed and its stops in
-// the newest archived GTFS, so routes that run past a region's edge are still matched to streets.
-// Saved with a date
-// so builds are reproducible: var/raw/osm-roads/<feed>/YYYY-MM-DD.json (and latest.json).
+// often plain service roads). The area is where the feed's buses go in its newest archived GTFS: the
+// cells of a grid (CELL_DEG) its shapes and stops are in, and their neighbours, so a feed of towns
+// far apart (BC Transit's Northern BC) doesn't fetch every road between them. Saved with a date so
+// builds are reproducible: var/raw/osm-roads/<feed>/YYYY-MM-DD.json (and latest.json).
 //
 //   tsx pipelines/fetch-osm-roads.ts [--feed <id>]   (default: every feed)
 //   tsx pipelines/fetch-osm-roads.ts --max-age-days 30   (only feeds without roads, or older; the
 //                                                         nightly data build, pipelines/data.ts)
 //
-// The newest KEEP_DATED dated files are kept (TransLink's are about 100 MB each).
+// The newest KEEP_DATED dated files are kept (TransLink's are about 100 MB each). Each feed tries
+// every server in turn, and again after a pause (ATTEMPTS); a feed that still fails keeps its
+// previous roads, the other feeds are fetched anyway, and the script exits non-zero at the end.
 //
 // OSM data © OpenStreetMap contributors, ODbL.
 
@@ -24,17 +26,16 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { archivedFeeds } from "@transitopia/data/gtfs-day.ts";
-import { OVERPASS_ENDPOINTS } from "@transitopia/data/overpass.ts";
-import { defaultModel } from "@transitopia/transit-core/plan/routes.ts";
 import { readCsv } from "@transitopia/data/gtfs-zip.ts";
-import {
-  feedPaths,
-  log,
-  readFeeds,
-  readRegions,
-} from "@transitopia/data/paths.ts";
+import { OVERPASS_ENDPOINTS } from "@transitopia/data/overpass.ts";
+import { feedPaths, log, readFeeds } from "@transitopia/data/paths.ts";
 
-const ENDPOINTS = OVERPASS_ENDPOINTS;
+/**
+ * Rounds over every server before a feed gives up, with a pause between them: a busy server often
+ * answers a few minutes later (Northern BC failed on both, then worked, 2026-11-02).
+ */
+const ATTEMPTS = 2;
+const RETRY_PAUSE_MS = 2 * 60_000;
 const ROAD_CLASSES = [
   "motorway",
   "motorway_link",
@@ -57,53 +58,24 @@ const ROAD_CLASSES = [
 const KEEP_DATED = 3;
 /** Service roads this close to a bus stop are included (m): exchange loops and bays. */
 const SERVICE_NEAR_STOP_M = 150;
-/** Margin around the feed's stops (degrees, about 1 km), for shapes that run a little past them. */
-const STOPS_MARGIN_DEG = 0.01;
 
 type Bbox = [number, number, number, number];
 
-/** Whether the feed's newest archived GTFS has a bus route (as plan/routes.ts models route types). */
-async function hasBuses(feed: string): Promise<boolean> {
-  const [newest] = await archivedFeeds(feed);
-  if (!newest) return false;
-  for await (const row of readCsv(newest.path, "routes.txt"))
-    if (defaultModel(row.route_type)?.mode === "bus") return true;
-  return false;
-}
-
-/** The bbox of the feed's stops in its newest archived GTFS, with a margin; undefined without one. */
-async function stopsBbox(feed: string): Promise<Bbox | undefined> {
-  const [newest] = await archivedFeeds(feed);
-  if (!newest) return undefined;
-  let box: Bbox | undefined;
-  for await (const row of readCsv(newest.path, "stops.txt")) {
-    const lat = Number(row.stop_lat);
-    const lon = Number(row.stop_lon);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon) || (!lat && !lon))
-      continue;
-    box =
-      box ?
-        [
-          Math.min(box[0], lon),
-          Math.min(box[1], lat),
-          Math.max(box[2], lon),
-          Math.max(box[3], lat),
-        ]
-      : [lon, lat, lon, lat];
-  }
-  if (!box) return undefined;
-  const m = STOPS_MARGIN_DEG;
-  return [box[0] - m, box[1] - m, box[2] + m, box[3] + m];
-}
-
-function query(bbox: string): string {
+function query(boxes: readonly Bbox[]): string {
+  const bboxes = boxes.map(([west, south, east, north]) =>
+    [south, west, north, east].join(","),
+  );
+  const each = (statement: (bbox: string) => string) =>
+    bboxes.map(statement).join("\n");
   return `[out:json][timeout:600];
 (
-  way["highway"~"^(${ROAD_CLASSES.join("|")})$"](${bbox});
-  way["highway"="service"]["bus"~"^(yes|designated)$"](${bbox});
-  way["highway"="service"]["psv"~"^(yes|designated)$"](${bbox});
+${each((b) => `  way["highway"~"^(${ROAD_CLASSES.join("|")})$"](${b});`)}
+${each((b) => `  way["highway"="service"]["bus"~"^(yes|designated)$"](${b});`)}
+${each((b) => `  way["highway"="service"]["psv"~"^(yes|designated)$"](${b});`)}
 )->.roads;
-node["highway"="bus_stop"](${bbox})->.stops;
+(
+${each((b) => `  node["highway"="bus_stop"](${b});`)}
+)->.stops;
 way["highway"="service"](around.stops:${SERVICE_NEAR_STOP_M})->.service;
 (.roads; .service;)->.ways;
 .ways out body qt;
@@ -111,42 +83,50 @@ node(w.ways);
 out skel qt;`;
 }
 
-async function fetchFeed(feed: string, bbox: Bbox) {
-  const [west, south, east, north] = bbox;
-  const q = query([south, west, north, east].join(","));
+async function fetchFeed(feed: string, area: readonly BBox[]) {
+  const q = query(area);
   const dir = feedPaths(feed).roads;
   await mkdir(dir, { recursive: true });
   let lastErr: unknown;
-  for (const url of ENDPOINTS) {
-    try {
-      log(`${feed}: querying ${url}`);
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": "Transitopia (+https://www.transitopia.org)",
-        },
-        body: new URLSearchParams({ data: q }),
-        signal: AbortSignal.timeout(900_000),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      const data = JSON.parse(text) as { elements: { type: string }[] };
-      const out = join(dir, `${new Date().toISOString().slice(0, 10)}.json`);
-      await writeFile(out, text);
-      await copyFile(out, join(dir, "latest.json"));
-      const counts: Record<string, number> = {};
-      for (const e of data.elements) counts[e.type] = (counts[e.type] ?? 0) + 1;
-      log(`${feed}: saved ${out}: ${JSON.stringify(counts)}`);
-      const dated = (await readdir(dir))
-        .filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f))
-        .sort()
-        .reverse();
-      for (const f of dated.slice(KEEP_DATED)) await rm(join(dir, f));
-      return;
-    } catch (e) {
-      lastErr = e;
-      log(`${feed}: ${url} failed: ${String(e)}`);
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    if (attempt > 1) {
+      log(
+        `${feed}: every server failed; trying again in ${RETRY_PAUSE_MS / 60_000} min`,
+      );
+      await new Promise((r) => setTimeout(r, RETRY_PAUSE_MS));
+    }
+    for (const url of OVERPASS_ENDPOINTS) {
+      try {
+        log(`${feed}: querying ${url}`);
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "Transitopia (+https://www.transitopia.org)",
+          },
+          body: new URLSearchParams({ data: q }),
+          signal: AbortSignal.timeout(900_000),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        const data = JSON.parse(text) as { elements: { type: string }[] };
+        const out = join(dir, `${new Date().toISOString().slice(0, 10)}.json`);
+        await writeFile(out, text);
+        await copyFile(out, join(dir, "latest.json"));
+        const counts: Record<string, number> = {};
+        for (const e of data.elements)
+          counts[e.type] = (counts[e.type] ?? 0) + 1;
+        log(`${feed}: saved ${out}: ${JSON.stringify(counts)}`);
+        const dated = (await readdir(dir))
+          .filter((f) => /^\d{4}-\d{2}-\d{2}\.json$/.test(f))
+          .sort()
+          .reverse();
+        for (const f of dated.slice(KEEP_DATED)) await rm(join(dir, f));
+        return;
+      } catch (e) {
+        lastErr = e;
+        log(`${feed}: ${url} failed: ${String(e)}`);
+      }
     }
   }
   throw lastErr;
@@ -170,34 +150,71 @@ async function fresh(feed: string): Promise<boolean> {
   }
 }
 
-const regions = await readRegions();
-let failed = 0;
+type BBox = [number, number, number, number];
+
+/**
+ * Roads are fetched for the cells of a grid this size (degrees: about 5.5 km north-south, 3.5 km
+ * east-west) that a shape or stop is in, and for the cells around those: a margin of at least a cell
+ * for shapes that pass between points or run on past a stop to turn (guess).
+ */
+const CELL_DEG = 0.05;
+
+/** Where the buses of the feed's newest archived GTFS go, as boxes: runs of cells, row by row. */
+async function feedArea(feed: string): Promise<BBox[] | undefined> {
+  const [newest] = await archivedFeeds(feed);
+  if (!newest) return undefined;
+  const rows = new Map<number, Set<number>>();
+  const add = (lonV: string | undefined, latV: string | undefined) => {
+    const lon = Number(lonV);
+    const lat = Number(latV);
+    if (!lonV || !latV || !Number.isFinite(lon + lat)) return;
+    const i = Math.floor(lon / CELL_DEG);
+    const j = Math.floor(lat / CELL_DEG);
+    for (let dj = -1; dj <= 1; dj++) {
+      let row = rows.get(j + dj);
+      if (!row) rows.set(j + dj, (row = new Set()));
+      for (let di = -1; di <= 1; di++) row.add(i + di);
+    }
+  };
+  for await (const s of readCsv(newest.path, "stops.txt"))
+    add(s.stop_lon, s.stop_lat);
+  for await (const p of readCsv(newest.path, "shapes.txt"))
+    add(p.shape_pt_lon, p.shape_pt_lat);
+  const boxes: BBox[] = [];
+  const at = (n: number) => Math.round(n * CELL_DEG * 1e6) / 1e6;
+  for (const [j, row] of [...rows].sort(([a], [b]) => a - b)) {
+    const cells = [...row].sort((a, b) => a - b);
+    let start = cells[0]!;
+    for (const [k, i] of cells.entries()) {
+      const next = cells[k + 1];
+      if (next === i + 1) continue;
+      boxes.push([at(start), at(j), at(i + 1), at(j + 1)]);
+      if (next !== undefined) start = next;
+    }
+  }
+  return boxes.length ? boxes : undefined;
+}
+
+const failed: string[] = [];
 for (const feed of await readFeeds()) {
   if (only && feed.id !== only) continue;
   if (await fresh(feed.id)) {
     log(`${feed.id}: roads fetched within ${maxAgeDays} days`);
     continue;
   }
-  const shown = regions.filter((r) => r.feeds.includes(feed.id));
-  if (!shown.length) continue;
-  // Roads are for matching bus shapes: a feed without buses (ferries) needs none, and its area can
-  // be huge (BC Ferries' runs to Haida Gwaii).
-  if (!(await hasBuses(feed.id))) {
-    log(`${feed.id}: no bus routes, no roads needed`);
-    continue;
+  const area = await feedArea(feed.id);
+  if (!area) continue;
+  log(`${feed.id}: ${area.length} boxes along its routes`);
+  try {
+    await fetchFeed(feed.id, area);
+  } catch (e) {
+    failed.push(feed.id);
+    log(
+      `${feed.id}: no roads fetched (${String(e)}); keeping the ones fetched before, if any`,
+    );
   }
-  const stops = await stopsBbox(feed.id);
-  const boxes = [...shown.map((r) => r.bbox), ...(stops ? [stops] : [])];
-  const bbox: Bbox = [
-    Math.min(...boxes.map((b) => b[0])),
-    Math.min(...boxes.map((b) => b[1])),
-    Math.max(...boxes.map((b) => b[2])),
-    Math.max(...boxes.map((b) => b[3])),
-  ];
-  // One feed failing (an Overpass instance timing out on a large area) doesn't stop the others.
-  await fetchFeed(feed.id, bbox).catch((e: unknown) => {
-    failed++;
-    log(`✖ ${feed.id}: ${e instanceof Error ? e.message : String(e)}`);
-  });
 }
-if (failed) process.exit(1);
+if (failed.length) {
+  log(`Roads not fetched for ${failed.join(", ")}`);
+  process.exitCode = 1;
+}

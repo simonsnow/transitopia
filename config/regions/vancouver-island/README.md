@@ -1,43 +1,41 @@
 # Vancouver Island and Sunshine Coast
 
-A region showing BC Transit's eleven transit systems on Vancouver Island, the Gulf Islands and the Sunshine Coast as one map, so that where two systems meet (Deep Bay, Duncan, Oyster River, Victoria's Douglas St) both are shown and a transfer can be judged. They are one feed, `bc-transit-vancouver-island` ([config/feeds/bc-transit-vancouver-island/](../../feeds/bc-transit-vancouver-island/)), merged from each system's GTFS with each system as an agency of its own ([docs/DESIGN.md → Regions and feeds](../../../docs/DESIGN.md#regions-and-feeds)). It replaced a region per system (Greater Victoria from 2026-10-14; Nanaimo, Comox Valley and the rest briefly on 2026-10-28), whose rectangles couldn't follow systems that share ground.
+This legacy region record covers Vancouver Island, the Gulf Islands and the Sunshine Coast. Its feed list is retained for the server's `/regions/*` compatibility endpoints; the browser loads feeds by viewport and uses named views from `apps/web/src/TransitMap/views.ts`.
 
-The region also shows BC Ferries and Hullo as overlay feeds. Hullo's Vancouver–Nanaimo route is listed here as well as in Metro Vancouver, so it remains on the map when the viewport switches to this region.
+BC Transit's eleven systems in this area are now split across three feeds: eight island systems in `bc-transit-vancouver-island`, Greater Victoria in `bc-transit-victoria`, and the Sunshine Coast and qathet in `bc-transit-sunshine-coast`. The region also includes BC Ferries and Hullo schedules.
 
 | Path | What |
 |---|---|
-| `region.json` | bbox (Victoria to Port Hardy, Tofino to Gibsons), its `areas` (two rectangles round Metro Vancouver's bbox), the first view of `/transit` (Victoria), and its feeds |
-| Settings | None of its own yet: vehicles and real-time use come from [config/defaults/](../../defaults/) and BC Transit's [operator.json](../../operators/bc-transit/operator.json), each with a source or "guess" and a cross-reference to [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) |
+| `region.json` | Legacy bounds, initial view, and feeds |
+| `config/feeds/bc-transit-vancouver-island/` | Eight merged Vancouver Island systems |
+| `config/feeds/bc-transit-victoria/` | Greater Victoria |
+| `config/feeds/bc-transit-sunshine-coast/` | Sunshine Coast and qathet |
+| `config/feeds/bc-ferries/`, `config/feeds/hullo/` | Ferry schedules |
 
 ## Systems
 
-Each is a part of the feed (`feed.json` → `static.parts`) and an agency in it; its Consat operator id is in its URLs. Counts are from the exports of 2026-10-28.
+The Consat operator IDs and route counts below are from the exports of 2026-11-02. The route groups are identified by their feed:
 
-| Agency | System | Consat id | Routes | Stops | Places |
-|---|---|---|---|---|---|
-| `victoria` | [Victoria Regional](https://www.bctransit.com/victoria/) | 48 | 69 | 2,360 | Sooke to Swartz Bay |
-| `cowichan-valley` | [Cowichan Valley Regional](https://www.bctransit.com/cowichan-valley/) | 10 | 15 | 598 | Duncan, Lake Cowichan, Chemainus, Ladysmith, Mill Bay, and a commuter route into Victoria |
-| `salt-spring-island` | [Salt Spring Island](https://www.bctransit.com/salt-spring-island/) | 39 | 7 | 28 | Ganges and the Fulford Harbour, Vesuvius and Long Harbour ferries |
-| `nanaimo` | [Nanaimo Regional](https://www.bctransit.com/nanaimo/) | 41 | 22 | 841 | Duncan (70 NCX) to Deep Bay (99) |
-| `port-alberni` | [Port Alberni](https://www.bctransit.com/port-alberni/) | 11 | 4 | 145 | Port Alberni |
-| `west-coast` | [West Coast](https://www.bctransit.com/west-coast/) | 51 | 1 | 39 | Tofino to Ucluelet |
-| `comox-valley` | [Comox Valley](https://www.bctransit.com/comox-valley/) | 45 | 16 | 273 | Courtenay, Comox, Cumberland, Deep Bay to Oyster River |
-| `campbell-river` | [Campbell River](https://www.bctransit.com/campbell-river/) | 12 | 8 | 284 | Campbell River, south to Oyster River |
-| `qathet` | [qathet Regional](https://www.bctransit.com/qathet/) | 29 | 7 | 227 | Powell River and Lund |
-| `mount-waddington` | [Mount Waddington](https://www.bctransit.com/mount-waddington/) | 17 | 6 | 73 | Port Hardy, Port McNeill and Coal Harbour |
-| `sunshine-coast` | [Sunshine Coast](https://www.bctransit.com/sunshine-coast/) | 18 | 5 | 298 | Langdale, Gibsons and Sechelt to Halfmoon Bay |
+| Feed | System | Consat ID | Routes | Places |
+|---|---|---:|---:|---|
+| `bc-transit-victoria` | Victoria Regional | 48 | 69 | Sooke to Swartz Bay |
+| `bc-transit-vancouver-island` | Cowichan Valley Regional | 10 | 15 | Duncan, Lake Cowichan, Chemainus, Ladysmith, Mill Bay |
+| `bc-transit-vancouver-island` | Salt Spring Island | 39 | 7 | Ganges and the Fulford Harbour, Vesuvius and Long Harbour ferries |
+| `bc-transit-vancouver-island` | Nanaimo Regional | 41 | 22 | Duncan (70 NCX) to Deep Bay (99) |
+| `bc-transit-vancouver-island` | Port Alberni | 11 | 4 | Port Alberni |
+| `bc-transit-vancouver-island` | West Coast | 51 | 1 | Tofino to Ucluelet |
+| `bc-transit-vancouver-island` | Comox Valley | 45 | 16 | Courtenay, Comox, Cumberland, Deep Bay to Oyster River |
+| `bc-transit-vancouver-island` | Campbell River | 12 | 8 | Campbell River, south to Oyster River |
+| `bc-transit-vancouver-island` | Mount Waddington | 17 | 6 | Port Hardy, Port McNeill and Coal Harbour |
+| `bc-transit-sunshine-coast` | qathet Regional | 29 | 7 | Powell River and Lund |
+| `bc-transit-sunshine-coast` | Sunshine Coast | 18 | 5 | Langdale, Gibsons and Sechelt to Halfmoon Bay |
 
-Drawn routes: every route in the feed, with Victoria's **95 Langford / Downtown Blink** (RapidBus) and the **1 Nanaimo Rapid Line** in their own colours (`config/feeds/bc-transit-vancouver-island/routes.json`). Riders see each route by its number; in the plan its key is qualified by its system (`95@victoria`), since most systems have a route 1. Buses are live from BC Transit's GTFS-realtime where the server polls it, estimated from the timetable otherwise. The Squamish, Whistler and Pemberton systems (Consat 43, 44, 50) are on the mainland and aren't included.
+All routes are drawn by default. The `1 Nanaimo Rapid Line` is branded in its own colour by `config/feeds/bc-transit-vancouver-island/routes.json`; Victoria's `95 Blink RapidBus` is configured in `config/feeds/bc-transit-victoria/routes.json`. The merged feeds key routes by GTFS `route_id`, so each system's route number remains distinct in stored data while `shortName` is what riders see. Buses are live from BC Transit's GTFS-realtime when polled and schedule-estimated otherwise.
 
 ## What we know
 
-- **Ids across systems**: Consat's ids are global. The 37 stop ids two systems' exports share are the same stops (Cowichan Valley's commuter route stops on Victoria's Douglas St and at Legislature Exchange, under shorter names), and the 6 shared service ids have identical calendars; no trip, route or shape id appears in two (exports of 2026-10-28). So the merge keeps one row per id, Victoria's first. The schedule export takes one operator id per request (several return an empty feed), but the real-time endpoints take several, and answer with every system's vehicles in one response.
-- **Exchanges**: Victoria's drawn routes use Legislature, Langford, Colwood, UVic, Royal Oak and McTavish exchanges and Swartz Bay Ferry Terminal. BC Transit names bays without `@` ("Langford Exch (Jacklin Rd) Bay D"); a group of bays on a side street is the same exchange (feed of 2026-10-14).
-- **Real-time data**: in Victoria (sampled 2026-10-14 15:00), 185 buses reporting, every one on a trip; trip updates covered 85 % of them; 33 trips marked `CANCELED`; fixes were p50 ~8 s old when fetched. Every other system's vehicles were on trips when first checked (2026-10-28 12:50).
-- **Route colours**: most systems give every route its own colour in the GTFS. The Sunshine Coast, qathet and West Coast give every route `000000` (exports of 2026-10-28); the plan draws the first two's in the grey of routes without a colour, since one colour on every route of an agency is a placeholder. With one route there's no telling, so West Coast's is set to the same grey in `routes.json`.
+- **Merged exports**: BC Transit returns an empty static feed when asked for several system IDs at once, though its real-time endpoints combine them. Each feed therefore downloads its systems' exports and merges them (`static.merge`; `packages/data/src/gtfs-merge.ts`). Identical IDs are retained once, shared stops keep the first export's row, and other conflicting rows fail the merge.
+- **Route IDs**: several systems use the same route numbers, so the merged feeds use each GTFS `route_id` as the plan key (`feed.json` → `routeKey`). For example, `1-NAN` and `1-COM` both display as route 1 but remain separate routes.
+- **Static timetable**: each export can be regenerated daily with a new `feed_version` while only past dates roll off. The merge and archive logic is described in the [Timetables section](../../../packages/transit-core/DESIGN.md#timetables).
 
-### Static timetable
-
-*Was part of OPEN-QUESTIONS #1.* BC Transit exports each system's static feed every day under a new `feed_version`, and each export is the previous one minus the date that has passed: its `calendar_dates.txt` rows, and the trips (with their stop times) of services that ran only then; `feed_start_date` moves forward and `feed_end_date` stays. Every other file is byte-identical. Seen in every Victoria export from 2026-10-14 to 10-25, compared with the one before (`rolloffDifference` in `packages/data/src/gtfs-rolloff.ts`), whose timetable never otherwise changed. The merge is deterministic, so the same holds for the merged feed, and `fetch-gtfs` keeps the newest archived version for such an export, instead of archiving about 17 MB and building a plan every day.
-
-What's still assumed is in [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md); when one is answered, update the config and move the answer here with its source.
+Feed-specific assumptions are tracked in each feed's `OPEN-QUESTIONS.md`: [Vancouver Island](../../feeds/bc-transit-vancouver-island/OPEN-QUESTIONS.md), [Greater Victoria](../../feeds/bc-transit-victoria/OPEN-QUESTIONS.md), [Sunshine Coast](../../feeds/bc-transit-sunshine-coast/OPEN-QUESTIONS.md), and [BC Ferries](../../feeds/bc-ferries/OPEN-QUESTIONS.md).

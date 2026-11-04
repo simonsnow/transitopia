@@ -1,14 +1,13 @@
-// Download each feed's latest GTFS static zip (config/feeds/<feed>/feed.json → static.url), or a dated
-// snapshot where the provider keeps them, or each of its parts' (static.parts), merged into one
-// (packages/data/src/gtfs-merge.ts), or zip a GTFS of our own committed in the feed's config
-// (static.dir); and archive it by feed_version under
+// Download each feed's latest GTFS static zip (config/feeds/<feed>/feed.json → static.url), a dated
+// snapshot where the provider keeps them, or the exports it merges (static.merge,
+// packages/data/src/gtfs-merge.ts), and archive it by feed_version under
 // var/raw/gtfs/<feed>/<version dir>/google_transit.zip. Idempotent: an already-archived version is
 // left alone, and so is a download with the same timetable as the newest archived version's: the
 // same files, or the same minus the dates that have passed (BC Transit re-exports every day, under
 // a new feed_version). See
 // packages/transit-core/DESIGN.md#timetables.
 //
-//   tsx pipelines/fetch-gtfs.ts                              # every region's feeds, latest
+//   tsx pipelines/fetch-gtfs.ts                              # every feed (config/feeds/), latest
 //   tsx pipelines/fetch-gtfs.ts --feed translink             # one feed
 //   tsx pipelines/fetch-gtfs.ts --feed translink --history 2026-09-25
 
@@ -26,8 +25,8 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
-import { readCsvAll, zipSignature } from "@transitopia/data/gtfs-zip.ts";
 import { mergeGtfs } from "@transitopia/data/gtfs-merge.ts";
+import { readCsvAll, zipSignature } from "@transitopia/data/gtfs-zip.ts";
 import { archivedFeeds, type FeedZip } from "@transitopia/data/gtfs-day.ts";
 import {
   rolloffDifference,
@@ -52,63 +51,72 @@ export interface FetchedFeed {
   isNew: boolean;
 }
 
-async function download(feed: string, url: string, dest: string) {
-  log(`${feed}: downloading ${url}`);
+/** Download one GTFS zip to `dest`, refusing one without routes (BC Transit answers an unknown export with an empty feed). */
+async function download(
+  feed: FeedInfo,
+  url: string,
+  dest: string,
+): Promise<void> {
+  log(`${feed.id}: downloading ${url}`);
   const res = await fetch(url, {
     headers: { "User-Agent": "Transitopia (+https://www.transitopia.org)" },
   });
   if (!res.ok || !res.body)
-    throw new Error(`${feed}: GTFS download failed: HTTP ${res.status}`);
+    throw new Error(`${feed.id}: GTFS download failed: HTTP ${res.status}`);
   await pipeline(
     Readable.fromWeb(res.body as WebReadableStream),
     createWriteStream(dest),
   );
+  if (!(await readCsvAll(dest, "routes.txt")).length)
+    throw new Error(`${feed.id}: ${url} has no routes`);
+}
+
+/** The feed's latest GTFS at `dest`: downloaded, or each export it merges downloaded and merged. */
+async function latest(feed: FeedInfo, dest: string): Promise<void> {
+  if ("dir" in feed.static) {
+    const dir = join(feedPaths(feed.id).dir, feed.static.dir);
+    const names = (await readdir(dir)).filter((n) => n.endsWith(".txt")).sort();
+    const files: Zippable = {};
+    for (const n of names)
+      files[n] = [
+        await readFile(join(dir, n)),
+        { mtime: new Date("2000-01-01T00:00:00Z") },
+      ];
+    log(`${feed.id}: zipping ${names.length} files from ${dir}`);
+    await writeFile(dest, zipSync(files));
+    return;
+  }
+  if ("url" in feed.static) return download(feed, feed.static.url, dest);
+  const parts = feed.static.merge.map((_, i) =>
+    dest.replace(/\.zip$/, `-part${i}.zip`),
+  );
+  try {
+    for (const [i, url] of feed.static.merge.entries())
+      await download(feed, url, parts[i]!);
+    const report = await mergeGtfs(parts, dest, {
+      timezones: Object.fromEntries(
+        (feed.equivalentTimezones ?? []).map((z) => [z, feed.timezone]),
+      ),
+    });
+    for (const [file, n] of Object.entries(report.keptFirst))
+      log(
+        `${feed.id}: ${file}: ${n} records listed differently by two exports; kept the first's`,
+      );
+  } finally {
+    for (const p of parts) await rm(p, { force: true });
+  }
 }
 
 export async function fetchGtfs(
   feed: FeedInfo,
-  url = feed.static.url,
+  url?: string,
 ): Promise<FetchedFeed> {
   const raw = feedPaths(feed.id).raw;
   await mkdir(raw, { recursive: true });
   const tmp = join(raw, `download-${process.pid}.zip`);
-  const partFiles: string[] = [];
+  await (url ? download(feed, url, tmp) : latest(feed, tmp));
 
   try {
-    if (url) await download(feed.id, url, tmp);
-    else if (feed.static.dir) {
-      // A GTFS of our own, committed: zipped, its files in order, with a fixed time (the same
-      // files make the same zip, so an unchanged one isn't archived again).
-      const dir = join(feedPaths(feed.id).dir, feed.static.dir);
-      const names = (await readdir(dir))
-        .filter((n) => n.endsWith(".txt"))
-        .sort();
-      const files: Zippable = {};
-      for (const n of names)
-        files[n] = [
-          await readFile(join(dir, n)),
-          { mtime: new Date("2000-01-01T00:00:00Z") },
-        ];
-      log(`${feed.id}: zipping ${names.length} files from ${dir}`);
-      await writeFile(tmp, zipSync(files));
-    } else {
-      // Every part, or none: a merged feed missing a part would drop its system's service.
-      const parts = feed.static.parts ?? [];
-      for (const p of parts) {
-        const path = join(raw, `download-${process.pid}-${p.agency}.zip`);
-        partFiles.push(path);
-        await download(`${feed.id} (${p.agency})`, p.url, path);
-      }
-      await mergeGtfs(
-        parts.map((p, i) => ({
-          agency: p.agency,
-          name: p.name,
-          path: partFiles[i]!,
-        })),
-        tmp,
-      );
-    }
-
     const [info] = await readCsvAll(tmp, "feed_info.txt");
     if (!info?.feed_version || !info.feed_start_date || !info.feed_end_date)
       throw new Error(
@@ -123,13 +131,12 @@ export async function fetchGtfs(
     };
     const dest = join(raw, versionDir(version), "google_transit.zip");
     if (await exists(dest)) {
-      // A merged feed's version is its parts' (gtfs-merge.ts), which doesn't change when the parts
-      // themselves do (a system added to feed.json), and a GTFS of our own can be edited under the
-      // same version: then the new zip replaces the archived one.
-      if (
-        (!feed.static.parts && !feed.static.dir)
-        || (await zipSignature(dest)) === (await zipSignature(tmp))
-      ) {
+      // The version may not change when merged sources or a curated GTFS change.
+      if ("url" in feed.static && !url) {
+        log(`${feed.id}: feed ${version} already archived`);
+        return { ...found, path: dest, isNew: false };
+      }
+      if ((await zipSignature(dest)) === (await zipSignature(tmp))) {
         log(`${feed.id}: feed ${version} already archived`);
         return { ...found, path: dest, isNew: false };
       }
@@ -164,7 +171,6 @@ export async function fetchGtfs(
     return { ...found, path: dest, isNew: true };
   } finally {
     await rm(tmp, { force: true });
-    for (const f of partFiles) await rm(f, { force: true });
   }
 }
 
@@ -201,11 +207,13 @@ async function main() {
   const feeds = only ? [await readFeed(only)] : await readFeeds();
   if (history) {
     const [feed] = feeds;
-    if (!only || !feed?.static.historyUrl)
+    const historyUrl =
+      feed && "historyUrl" in feed.static ? feed.static.historyUrl : undefined;
+    if (!only || !feed || !historyUrl)
       throw new Error(
         "--history needs --feed <id>, for a feed with static.historyUrl",
       );
-    await fetchGtfs(feed, feed.static.historyUrl.replace("{date}", history));
+    await fetchGtfs(feed, historyUrl.replace("{date}", history));
     return;
   }
   // One feed failing (a provider down) doesn't stop the others; the build uses what's archived.

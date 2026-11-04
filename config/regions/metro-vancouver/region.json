@@ -2,12 +2,12 @@
   "$comment": "Region record (docs/DESIGN.md#feeds-operators-and-rail-networks). bbox: where this region's transit data applies, [west, south, east, north]; its west edge meets the Vancouver Island region's northern area at -123.45. The areas keep the Fraser Valley separate except for Mission, where TransLink's West Coast Express serves Mission City Station (config/feeds/translink/routes.json). TransLink routes reach Bowen Island. initialBounds: the first view of /transit when the URL has no map position (the SkyTrain network, UBC to King George).",
   "id": "metro-vancouver",
   "name": "Metro Vancouver",
-  "$feeds": "TransLink, Hullo, BC Ferries, and the schedule-only Fraser Valley overlay (config/feeds/<id>/feed.json).",
+  "$feeds": "TransLink, Hullo, BC Ferries, and BC Transit's Fraser Valley feed (config/feeds/<id>/feed.json).",
   "feeds": [
     "translink",
     "hullo",
     "bc-ferries",
-    "bc-transit-fraser-valley-overlay"
+    "bc-transit-fraser-valley"
   ],
   "bbox": [-123.45, 48.95, -122.15, 49.55],
   "areas": [

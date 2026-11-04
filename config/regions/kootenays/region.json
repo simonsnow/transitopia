@@ -1,9 +1,14 @@
 {
-  "$comment": "Region record (docs/DESIGN.md#regions-and-feeds). bbox: West Kootenay, Creston Valley, Revelstoke and Grand Forks, [west, south, east, north]. initialBounds: the first view of /transit when the URL has no map position (Nelson). Boundary Route 1 is a line-only overlay.",
+  "$comment": "Legacy region record for the server's /regions/* compatibility endpoints. Its bounds cover West Kootenay, Creston Valley, Revelstoke and Grand Forks; the browser loads feeds by viewport.",
   "id": "kootenays",
-  "$feeds": "BC Transit's Kootenay systems, its primary feed, and the inland ferries and Boundary Route 1 as overlays (docs/DESIGN.md#overlay-feeds).",
+  "$feeds": "BC Transit's Kootenays and Okanagan-Shuswap feeds, the latter including Revelstoke, plus inland ferries and Boundary Route 1.",
   "name": "Kootenays",
-  "feeds": ["bc-transit-kootenays", "bc-inland-ferries", "bc-transit-boundary"],
+  "feeds": [
+    "bc-transit-kootenays",
+    "bc-transit-okanagan-shuswap",
+    "bc-inland-ferries",
+    "bc-transit-boundary"
+  ],
   "bbox": [-118.8, 48.95, -116.3, 51.1],
   "initialBounds": [-117.36, 49.45, -117.2, 49.53]
 }

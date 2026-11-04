@@ -5,9 +5,9 @@
   "kinematics": {
     "modes": {
       "ferry": {
-        "$maxSpeed": "km/h. 8.97 km Balfour to Kootenay Bay (the OSM way's length) in 35 minutes, berth to berth: about 15 km/h on average, so cruising near 18 (guess; config/regions/kootenays/OPEN-QUESTIONS.md #5).",
+        "$maxSpeed": "km/h. 8.97 km Balfour to Kootenay Bay (the OSM way's length) in 35 minutes, berth to berth: about 15 km/h on average, so cruising near 18 (guess; config/feeds/bc-inland-ferries/OPEN-QUESTIONS.md #2).",
         "maxSpeed": 18,
-        "$length": "m. The Osprey 2000 carries 80 vehicles (BC government page, checked 2026-10-28); about 75 m long and 18 m wide (guess, from imagery; config/regions/kootenays/OPEN-QUESTIONS.md #5).",
+        "$length": "m. The Osprey 2000 carries 80 vehicles (BC government page, checked 2026-10-28); about 75 m long and 18 m wide (guess, from imagery; config/feeds/bc-inland-ferries/OPEN-QUESTIONS.md #2).",
         "length": 75,
         "width": 18,
         "accel": 0.05,
