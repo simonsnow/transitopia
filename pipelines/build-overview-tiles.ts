@@ -35,6 +35,7 @@ import {
   routeFeatures,
   type TileFeature,
 } from "@transitopia/transit-core/plan/tiles.ts";
+import { routeSections } from "@transitopia/transit-core/plan/coverage.ts";
 import {
   feedForDate,
   type ServicePlan,
@@ -53,8 +54,26 @@ const MIN_ZOOM = 3;
 export function overviewFeatures(plan: ServicePlan): TileFeature[] {
   const out: TileFeature[] = [];
   const brands = brandedRoutes(plan);
+  const idleBusRoutes = new Set(
+    plan.routes
+      .filter(
+        (route) =>
+          route.kind === "bus"
+          && !route.brand
+          && route.weekdayWait === undefined,
+      )
+      .map((route) => route.key),
+  );
   const tier = (wait: number | undefined) =>
     wait !== undefined && Number.isFinite(wait) ? bandIndex(wait) : -1;
+  const idleRoute = (geometry: TileFeature["geometry"], kind: string): void => {
+    out.push({
+      type: "Feature",
+      properties: { kind, idle: true },
+      geometry,
+      tippecanoe: { layer: OVERVIEW_LAYERS.routes },
+    });
+  };
   if (drawsCorridors(plan)) {
     const cf = new CorridorFrequency(plan);
     const corridors = overviewCorridors(plan);
@@ -83,6 +102,9 @@ export function overviewFeatures(plan: ServicePlan): TileFeature[] {
         tippecanoe: { layer: OVERVIEW_LAYERS.corridors },
       });
     });
+    for (const section of routeSections(plan, idleBusRoutes))
+      if (!section.empty)
+        idleRoute({ type: "LineString", coordinates: section.coords }, "bus");
   }
   const byKey = new Map(plan.routes.map((r) => [r.key, r]));
   for (const f of routeFeatures(plan)) {
@@ -91,7 +113,11 @@ export function overviewFeatures(plan: ServicePlan): TileFeature[] {
     const pair = f.properties["berthPair"];
     if (pair !== undefined && pair !== plan.ferry?.default) continue;
     const t = tier(route.weekdayWait);
-    if ((t < 0 && !route.brand) || f.properties["empty"]) continue;
+    if (f.properties["empty"]) continue;
+    if (t < 0 && !route.brand) {
+      idleRoute(f.geometry, route.kind);
+      continue;
+    }
     out.push({
       type: "Feature",
       properties: {

@@ -11,7 +11,7 @@ import type {
 } from "@maplibre/maplibre-gl-style-spec";
 import type { Map as MlMap } from "maplibre-gl";
 import type { Theme } from "@transitopia/map-style/basemap.ts";
-import { FREQUENCY_BANDS } from "@transitopia/shared/frequency.ts";
+import { FREQUENCY_BANDS, NO_SERVICE } from "@transitopia/shared/frequency.ts";
 import {
   ENGINE_MIN_ZOOM,
   OVERVIEW_LAYERS,
@@ -80,6 +80,7 @@ export function overviewLayers(
   maxzoom = ENGINE_MIN_ZOOM,
 ): LayerSpecification[] {
   const tierColors = FREQUENCY_BANDS.map((b) => b.color[theme]);
+  const noServiceColor = NO_SERVICE.color[theme];
   const tier = ["get", "tier"] as ExpressionSpecification;
   const byTier = (values: (string | number)[]) =>
     [
@@ -141,6 +142,19 @@ export function overviewLayers(
         "line-color": byTier(tierColors),
         "line-width": tierWidth,
         "line-opacity": byTier(TIER_OPACITY),
+      },
+    },
+    {
+      ...common,
+      id: "overview-routes-idle",
+      type: "line",
+      "source-layer": OVERVIEW_LAYERS.routes,
+      filter: ["==", ["get", "idle"], true],
+      paint: {
+        "line-color": noServiceColor,
+        "line-width": widths(BRAND_WIDTHS),
+        "line-opacity": 0.8,
+        "line-dasharray": [2, 2],
       },
     },
     {

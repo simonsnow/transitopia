@@ -35,9 +35,9 @@
       "tripUpdates": "https://bct.tmix.se/gtfs-realtime/tripupdates.pb?operatorIds=41,10,45,12,11,51,17,39",
       "alerts": "https://bct.tmix.se/gtfs-realtime/alerts.pb?operatorIds=41,10,45,12,11,51,17,39"
     },
-    "$poll": "Positions and trip updates every 2 minutes while buses run (05:00-24:00), every 5 overnight; alerts every 5 minutes, 15 overnight: at most every 2 minutes for BC Transit systems other than Victoria and Kelowna (Braden MacDonald, 2026-11-01 and 11-02; config/operators/bc-transit/operator.json). About 1,510 requests a day; dailyCap is a safety net. OPEN-QUESTIONS #2.",
+    "$poll": "Positions and trip updates every 2 minutes while buses run (05:00-24:00), every 5 overnight; alerts every 5 minutes, 15 overnight: at most every 2 minutes for BC Transit systems other than Victoria and Kelowna (Braden MacDonald, 2026-11-01 and 11-02; config/operators/bc-transit/operator.json). About 1,510 requests a day. Cap 4,000: the rolling ledger can contain requests from the faster pre-merge feed schedule, so it must allow that history to age out before the current schedule can resume (observed 2026-11-04; OPEN-QUESTIONS #2).",
     "poll": {
-      "dailyCap": 2000,
+      "dailyCap": 4000,
       "weekday": [
         { "from": "00:00", "positionsS": 300, "tripUpdatesS": 300, "alertsS": 900 },
         { "from": "05:00", "positionsS": 120, "tripUpdatesS": 120, "alertsS": 300 }
