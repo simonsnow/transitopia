@@ -44,3 +44,46 @@ export function lngLatBounds(
     [b[2], b[3]],
   ];
 }
+
+/** How far a starting point may be from a view (km) for /transit to open there instead of the first. */
+export const NEAREST_VIEW_KM = 100;
+
+/** Roughly how far (km) a point is from a view's bounds: 0 inside them. Fine at BC's latitudes and these distances. */
+export function kmFromView(
+  [lon, lat]: readonly [number, number],
+  { bounds: [w, s, e, n] }: TransitView,
+): number {
+  const dLon =
+    lon < w ? w - lon
+    : lon > e ? lon - e
+    : 0;
+  const dLat =
+    lat < s ? s - lat
+    : lat > n ? lat - n
+    : 0;
+  const kmPerDegree = 111.32;
+  return Math.hypot(
+    dLon * kmPerDegree * Math.cos((lat * Math.PI) / 180),
+    dLat * kmPerDegree,
+  );
+}
+
+/**
+ * The view /transit opens on for a starting point (the visitor's rough location): the nearest
+ * within NEAREST_VIEW_KM, else (or without one) the first.
+ */
+export function startingView(
+  point: readonly [number, number] | undefined,
+): TransitView {
+  let best = VIEWS[0]!;
+  if (!point) return best;
+  let bestKm = NEAREST_VIEW_KM;
+  for (const v of VIEWS) {
+    const km = kmFromView(point, v);
+    if (km <= bestKm) {
+      best = v;
+      bestKm = km;
+    }
+  }
+  return best;
+}

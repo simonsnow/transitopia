@@ -118,6 +118,8 @@ and the repo is an npm workspace, so the Cloudflare build settings need:
   Alternatively, turn on Web Analytics in the Cloudflare dashboard, which injects the beacon itself.
 
 Production data locations are in `apps/web/.env.production`.
+
+`functions/` at the repository root holds the site's one Cloudflare Pages Function, `/geo` (`functions/geo.ts`): the visitor's rough location from their IP address, which picks where `/transit` opens ([apps/web → Where /transit opens](../apps/web/README.md#where-transit-opens)). Pages finds it because the build's root directory is the repository root, and deploys it with the site; it needs no settings. Without it (local dev, or another host) `/transit` opens on Metro Vancouver.
 Region-selection areas are bundled into the website from `config/regions/*/region.json`. Changing
 them takes effect only after Cloudflare Pages rebuilds the frontend; adjust adjacent regions
 together so a selection change does not hide cross-boundary routes. Until cross-region overlays

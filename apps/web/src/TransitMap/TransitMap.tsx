@@ -17,7 +17,7 @@ import {
 import { useLocation } from "wouter";
 
 import { transitApi, transitData, transitOverviewTiles } from "../config.ts";
-import { openedPath, openedWithPosition } from "../startup.ts";
+import { openedPath, openedWithPosition, startingPoint } from "../startup.ts";
 import { useMap, useStyleGeneration, type MapType } from "../Map/MapUtils.ts";
 import { MapOverlayWindow } from "../Map/MapOverlayWindow.tsx";
 import { modeUrl, useOtherModeRedirect } from "../components/ModeLink.tsx";
@@ -32,7 +32,7 @@ import { RouteCard } from "./RouteCard.tsx";
 import { FollowPill } from "./FollowPill.tsx";
 import { useOverlayPadding } from "./overlayPadding.ts";
 import { FEEDS } from "./feeds.ts";
-import { VIEWS, lngLatBounds } from "./views.ts";
+import { VIEWS, lngLatBounds, startingView } from "./views.ts";
 
 const PADDING = { top: 90, bottom: 150, left: 20, right: 50 };
 
@@ -59,8 +59,10 @@ function showBounds(
 }
 
 /**
- * Show the first named view (views.ts) when the site was opened on /transit (or /) without a map
- * position. Only once: switching modes later keeps wherever the map is.
+ * When the site was opened on /transit (or /) without a map position, show the named view
+ * (views.ts) nearest the visitor, else the first (apps/web/README.md#where-transit-opens). Only
+ * once: switching modes later keeps wherever the map is, and a visitor who moved the map while the
+ * location was looked up keeps their view.
  */
 let initialViewDone = false;
 function useInitialView(map: MapType | undefined): void {
@@ -69,10 +71,19 @@ function useInitialView(map: MapType | undefined): void {
     initialViewDone = true;
     const openedOnTransit =
       openedPath === "/" || openedPath.startsWith("/transit");
-    if (openedOnTransit && !openedWithPosition)
-      showBounds(map, lngLatBounds(VIEWS[0]!.bounds), {
-        animate: false,
-      });
+    if (!openedOnTransit || openedWithPosition) return;
+    let moved = false;
+    const onMove = (e: { originalEvent?: unknown }) => {
+      if (e.originalEvent) moved = true;
+    };
+    map.on("movestart", onMove);
+    void startingPoint.then((point) => {
+      map.off("movestart", onMove);
+      if (!moved)
+        showBounds(map, lngLatBounds(startingView(point).bounds), {
+          animate: false,
+        });
+    });
   }, [map]);
 }
 
