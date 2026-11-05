@@ -271,6 +271,7 @@ Migrations run when the server starts. After changing `infra/backup/`, rebuild i
 
 #### Operations
 
+- When something looks wrong: [troubleshooting.md](troubleshooting.md) maps the parts and, per symptom, where to look.
 - Logs: `docker compose -f infra/compose.yml logs -f server` (or `db`, `caddy`, `backup`).
 - A psql shell: `docker compose -f infra/compose.yml exec db psql -U transitopia`.
 - Recompute a date's statistics: `docker compose -f infra/compose.yml exec server npm run stats -- 20261001`.
