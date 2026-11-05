@@ -28,6 +28,7 @@ import { OverviewLayers, TransitLayers } from "./TransitLayers.tsx";
 import { VehicleCard } from "./VehicleCard.tsx";
 import { PlaceCard } from "./PlaceCard.tsx";
 import { PickMenu } from "./PickMenu.tsx";
+import { LocateTip } from "./LocateTip.tsx";
 import { RouteCard } from "./RouteCard.tsx";
 import { FollowPill } from "./FollowPill.tsx";
 import { useOverlayPadding } from "./overlayPadding.ts";
@@ -282,6 +283,9 @@ export default function TransitMap() {
       : null}
       {map && !shown ?
         <OverviewLayers map={map} engine={engine} inView={inCoverage} />
+      : null}
+      {map ?
+        <LocateTip map={map} />
       : null}
     </>
   );
