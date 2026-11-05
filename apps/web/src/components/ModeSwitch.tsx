@@ -106,12 +106,16 @@ const ModeItem: React.FC<{
   );
 };
 
-/** The tip under the active pill, until a panel has been opened (tablet width up; phones only pulse). */
+/**
+ * The tip under the active pill, until a panel has been opened (tablet width up; phones only pulse).
+ * Below `lg`, where the header spans the map and the tip would cover a feature card's top, it waits
+ * while a card is open (the pill still pulses).
+ */
 const PanelTip: React.FC<{ label: string; onClose: () => void }> = ({
   label,
   onClose,
 }) => (
-  <div className="max-sm:hidden">
+  <div className="max-sm:hidden max-lg:[body:has(.info-card)_&]:hidden">
     {/* The arrow, centred under the pill. */}
     <span
       aria-hidden="true"

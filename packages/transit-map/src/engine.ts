@@ -2544,6 +2544,9 @@ export class TransitEngine {
       store: () => this.primary?.store,
       rt: () => this.primary?.rt,
       vehicles: () => this.lastVehicles,
+      /** Select a vehicle (its feed and id) and follow it, as a tap does (pipelines/screenshot.ts --pick). */
+      select: (feed: string, id: string) =>
+        this.select(feedKey(feed, id), { follow: true }),
     };
   }
 }

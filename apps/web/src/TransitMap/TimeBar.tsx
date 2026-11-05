@@ -8,6 +8,7 @@ import { localDate } from "@transitopia/transit-core/time.ts";
 
 import { Icon } from "../components/Icon.tsx";
 import { TimeMark, type Mark } from "../components/InfoCard.tsx";
+import { usePhone } from "../components/usePhone.ts";
 import {
   clockTime,
   fromIsoDate,
@@ -36,13 +37,12 @@ type Props = { engine: TransitEngine; snap: TransitSnapshot };
  * slider across the service day, shaded where real bus positions were recorded. Amber means "not
  * live" and nothing else. On phones the bar is compact (pause, time, Live) only while live; any
  * other state shows it expanded, and Go live collapses it. With a card open on a phone, the time
- * shrinks to a pill at the top.
+ * shrinks to a pill at the top. `aside` (the follow pill) goes with it: in the pill's row on
+ * phones, else just outside the bar's left end, on the side facing the map.
  */
-export const TimeBar: React.FC<Props & { cardOpen: boolean }> = ({
-  engine,
-  snap,
-  cardOpen,
-}) => {
+export const TimeBar: React.FC<
+  Props & { cardOpen: boolean; aside?: React.ReactNode }
+> = ({ engine, snap, cardOpen, aside }) => {
   useTimeKeys(engine);
   const phone = usePhone();
   const [pillOpen, setPillOpen] = React.useState(false);
@@ -51,10 +51,20 @@ export const TimeBar: React.FC<Props & { cardOpen: boolean }> = ({
     if (!cardOpen) setPillOpen(false);
   }, [cardOpen]);
 
-  if (!phone) return <FullBar engine={engine} snap={snap} />;
+  if (!phone) return <FullBar engine={engine} snap={snap} aside={aside} />;
   if (cardOpen && !pillOpen)
     return (
-      <TimePill engine={engine} snap={snap} onOpen={() => setPillOpen(true)} />
+      // The pill and the follow pill in a row, clear of the map controls; the follow pill wraps
+      // under the time where the two don't fit (a long "Showing …" when not live). Taps between
+      // them reach the map.
+      <div className="pointer-events-none absolute top-2.5 right-[3.75rem] left-2.5 z-[55] flex flex-wrap items-start gap-2 *:pointer-events-auto">
+        <TimePill
+          engine={engine}
+          snap={snap}
+          onOpen={() => setPillOpen(true)}
+        />
+        {aside}
+      </div>
     );
   return (
     <PhoneBar
@@ -62,23 +72,22 @@ export const TimeBar: React.FC<Props & { cardOpen: boolean }> = ({
       snap={snap}
       atTop={cardOpen}
       onCollapse={cardOpen ? () => setPillOpen(false) : undefined}
+      aside={aside}
     />
   );
 };
 
-function usePhone(): boolean {
-  const query = "(max-width: 639px)";
-  const [phone, setPhone] = React.useState(
-    () => window.matchMedia(query).matches,
-  );
-  React.useEffect(() => {
-    const m = window.matchMedia(query);
-    const onChange = () => setPhone(m.matches);
-    m.addEventListener("change", onChange);
-    return () => m.removeEventListener("change", onChange);
-  }, []);
-  return phone;
-}
+/** Next to a bar (absolutely placed inside it): `aside`, above or below its left end. */
+const BarAside: React.FC<{ below?: boolean; children: React.ReactNode }> = ({
+  below,
+  children,
+}) =>
+  children ?
+    <div
+      className={`absolute left-0 max-w-[calc(100%-25rem)] max-sm:max-w-full ${below ? "top-full mt-2" : "bottom-full mb-2"}`}>
+      {children}
+    </div>
+  : null;
 
 /** Keyboard: space play/pause, ←/→ one minute (shift: ten), L live, [ ] slower/faster. */
 function useTimeKeys(engine: TransitEngine): void {
@@ -128,7 +137,11 @@ function subLine(snap: TransitSnapshot, withService: boolean): string {
   return `${state} · ${date}`;
 }
 
-const FullBar: React.FC<Props> = ({ engine, snap }) => (
+const FullBar: React.FC<Props & { aside: React.ReactNode }> = ({
+  engine,
+  snap,
+  aside,
+}) => (
   <section
     aria-label="Time controls"
     data-map-overlay
@@ -147,12 +160,18 @@ const FullBar: React.FC<Props> = ({ engine, snap }) => (
       <LiveOrGoLive engine={engine} snap={snap} />
     </div>
     <Slider engine={engine} snap={snap} ticks={TICKS_DESKTOP} />
+    {/* Left of the card (360 px at the right), whose bottom can come down this far. */}
+    <BarAside>{aside}</BarAside>
   </section>
 );
 
 const PhoneBar: React.FC<
-  Props & { atTop: boolean; onCollapse: (() => void) | undefined }
-> = ({ engine, snap, atTop, onCollapse }) => {
+  Props & {
+    atTop: boolean;
+    onCollapse: (() => void) | undefined;
+    aside: React.ReactNode;
+  }
+> = ({ engine, snap, atTop, onCollapse, aside }) => {
   const expanded = !snap.live || atTop;
   return (
     <section
@@ -185,6 +204,7 @@ const PhoneBar: React.FC<
           <Badges snap={snap} />
         </>
       : null}
+      <BarAside below={atTop}>{aside}</BarAside>
     </section>
   );
 };
@@ -199,7 +219,7 @@ const TimePill: React.FC<Props & { onOpen: () => void }> = ({
   return (
     <div
       data-map-overlay
-      className={`absolute top-2.5 left-2.5 z-[55] flex h-11 items-center gap-2 rounded-full pr-3.5 pl-1.5 shadow-[0_4px_14px_rgb(17_24_39/0.25)] ${snap.live ? "border border-(--card-border) bg-(--card-bg) text-(--card-text)" : "bg-(--notlive-border) text-[#3b2300]"}`}>
+      className={`flex h-11 items-center gap-2 rounded-full pr-3.5 pl-1.5 shadow-[0_4px_14px_rgb(17_24_39/0.25)] ${snap.live ? "border border-(--card-border) bg-(--card-bg) text-(--card-text)" : "bg-(--notlive-border) text-[#3b2300]"}`}>
       <button
         type="button"
         aria-label={snap.playing ? "Pause" : "Play"}

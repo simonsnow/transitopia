@@ -1,6 +1,8 @@
 import React from "react";
 import type { TransitEngine } from "@transitopia/transit-map/engine.ts";
 
+import { OVERLAYS_CHANGED } from "../components/InfoCard.tsx";
+
 type Padding = { top: number; right: number; bottom: number; left: number };
 
 type Rect = Pick<
@@ -44,7 +46,7 @@ export function overlayPadding(box: Rect, overlays: Rect[]): Padding {
   return pad;
 }
 
-/** Re-measure after every render (cheap: a handful of rects) and on resize. */
+/** Re-measure after every render (cheap: a handful of rects), on resize, and when a card's sheet is dragged. */
 export function useOverlayPadding(engine: TransitEngine): void {
   const last = React.useRef("");
   const update = React.useCallback(() => {
@@ -59,6 +61,10 @@ export function useOverlayPadding(engine: TransitEngine): void {
   React.useEffect(update);
   React.useEffect(() => {
     window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
+    window.addEventListener(OVERLAYS_CHANGED, update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener(OVERLAYS_CHANGED, update);
+    };
   }, [update]);
 }

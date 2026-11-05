@@ -290,7 +290,6 @@ const EngineControls: React.FC<{
   useOverlayPadding(engine);
   return (
     <>
-      <FollowPill engine={engine} snap={snap} />
       <TransitLayers engine={engine} snap={snap} />
       <VehicleCard engine={engine} snap={snap} />
       <PlaceCard engine={engine} snap={snap} />
@@ -300,6 +299,7 @@ const EngineControls: React.FC<{
         engine={engine}
         snap={snap}
         cardOpen={!!snap.selected || !!snap.place}
+        aside={<FollowPill engine={engine} snap={snap} />}
       />
     </>
   );
