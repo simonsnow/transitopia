@@ -31,6 +31,7 @@ import { PickMenu } from "./PickMenu.tsx";
 import { LocateTip } from "./LocateTip.tsx";
 import { RouteCard } from "./RouteCard.tsx";
 import { FollowPill } from "./FollowPill.tsx";
+import { useWakeLock } from "../components/useWakeLock.ts";
 import { useOverlayPadding } from "./overlayPadding.ts";
 import { FEEDS } from "./feeds.ts";
 import { VIEWS, lngLatBounds, startingView } from "./views.ts";
@@ -303,6 +304,7 @@ const EngineControls: React.FC<{
   useDatasets(snap.datasets);
   useElsewhere(snap.elsewhere, onElsewhere);
   useOverlayPadding(engine);
+  useWakeLock(snap.following && !!snap.selected);
   return (
     <>
       <TransitLayers engine={engine} snap={snap} />
